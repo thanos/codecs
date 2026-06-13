@@ -11,11 +11,15 @@ path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-rustler = "0.36"
+rustler = { version = "0.36", default-features = false, features = ["derive"] }
 zstd = "0.13"
 lz4_flex = "0.11"
 snap = "1.1"
 bzip2 = "0.4"
+
+[features]
+default = ["nif_version_2_17"]
+nif_version_2_17 = ["rustler/nif_version_2_17"]
 
 [profile.release]
 opt-level = 3
