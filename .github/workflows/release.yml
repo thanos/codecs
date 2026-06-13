@@ -39,9 +39,11 @@ jobs:
       matrix:
         nif: ["2.17"]
         job:
-          # macOS
+          # macOS — build both arches on Apple Silicon (macos-14) runners.
+          # The "x86_64" build cross-compiles via `rustup target add`, avoiding the
+          # scarce Intel macos-13 runners that can queue for a very long time.
           - { target: aarch64-apple-darwin, os: macos-14 }
-          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-apple-darwin, os: macos-14 }
           # Linux: native and cross (cross from-source works on any runner arch)
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
           - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
