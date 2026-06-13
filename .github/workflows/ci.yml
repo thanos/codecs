@@ -13,7 +13,7 @@ concurrency:
 env:
   ELIXIR_VERSION: "1.18"
   OTP_VERSION: "27"
-  RUST_VERSION: "1.77"
+  RUST_VERSION: "1.85"
 
 jobs:
   format:
