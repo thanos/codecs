@@ -16,7 +16,11 @@ defmodule ExCodecs.MixProject do
       package: package(),
       aliases: aliases(),
       elixirc_paths: elixirc_paths(Mix.env()),
-      test_coverage: [tool: ExCoveralls],
+      test_coverage: [
+      tool: ExCoveralls,
+      ignore_modules: [ExCodecs.Native],
+      threshold: 90
+    ],
       preferred_cli_env: [
         coveralls: :test,
         "coveralls.detail": :test,

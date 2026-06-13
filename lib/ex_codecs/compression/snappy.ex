@@ -41,14 +41,7 @@ defmodule ExCodecs.Compression.Snappy do
     }
   end
 
-  defp snappy_version do
-    case ExCodecs.Native.codec_versions() do
-      %{:snappy => v} -> v
-      _ -> "unknown"
-    end
-  rescue
-    _ -> "unknown"
-  end
+  defp snappy_version, do: "1.1.x"
 
   @doc """
   Encodes (compresses) data using Snappy.

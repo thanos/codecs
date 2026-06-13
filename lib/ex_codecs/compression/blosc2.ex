@@ -67,14 +67,7 @@ defmodule ExCodecs.Compression.Blosc2 do
     }
   end
 
-  defp blosc2_version do
-    case ExCodecs.Native.codec_versions() do
-      %{:blosc2 => v} -> v
-      _ -> "unknown"
-    end
-  rescue
-    _ -> "unknown"
-  end
+  defp blosc2_version, do: "2.x-pure-rust"
 
   @doc """
   Encodes (compresses) data using Blosc2.

@@ -67,6 +67,7 @@ defmodule ExCodecs.Error do
   defp default_message(:compression_failed), do: "Compression failed"
   defp default_message(:decompression_failed), do: "Decompression failed"
   defp default_message(:nif_not_loaded), do: "The native NIF library is not loaded"
+  defp default_message(reason), do: "Error: #{reason}"
 
   defp nif_error_to_atom(reason) when is_atom(reason), do: reason
   defp nif_error_to_atom(_), do: :compression_failed

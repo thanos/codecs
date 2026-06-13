@@ -23,6 +23,16 @@ defmodule ExCodecs.CodecTest do
       assert codec.configurable? == true
       assert codec.version == "1.5.6"
     end
+
+    test "has default values" do
+      codec = %Codec{name: :test}
+      assert codec.category == nil
+      assert codec.module == nil
+      assert codec.native? == nil
+      assert codec.streaming? == nil
+      assert codec.configurable? == nil
+      assert codec.version == nil
+    end
   end
 
   describe "validates?/1" do
@@ -36,6 +46,10 @@ defmodule ExCodecs.CodecTest do
 
     test "returns false for invalid module" do
       assert Codec.validates?(NonexistentModule) == false
+    end
+
+    test "returns false for module without encode/decode" do
+      assert Codec.validates?(Enum) == false
     end
   end
 end

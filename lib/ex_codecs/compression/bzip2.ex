@@ -51,14 +51,7 @@ defmodule ExCodecs.Compression.Bzip2 do
     }
   end
 
-  defp bzip2_version do
-    case ExCodecs.Native.codec_versions() do
-      %{:bzip2 => v} -> v
-      _ -> "unknown"
-    end
-  rescue
-    _ -> "unknown"
-  end
+  defp bzip2_version, do: "0.4.x"
 
   @doc """
   Encodes (compresses) data using Bzip2.

@@ -85,12 +85,16 @@ defmodule ExCodecsTest do
 
   describe "error handling" do
     test "unsupported codec returns error" do
-      result = ExCodecs.encode(:nonexistent_codec, "data")
+      result = ExCodecs.encode(:unknown_codec, "data")
       assert match?({:error, %ExCodecs.Error{reason: :unsupported_codec}}, result)
     end
 
-    test "invalid data type returns error" do
-      assert {:error, %ExCodecs.Error{}} = ExCodecs.encode(:zstd, 123)
+    test "invalid data type returns error for encode" do
+      assert {:error, %ExCodecs.Error{reason: :invalid_data}} = ExCodecs.encode(:zstd, 123)
+    end
+
+    test "invalid data type returns error for decode" do
+      assert {:error, %ExCodecs.Error{reason: :invalid_data}} = ExCodecs.decode(:zstd, 123)
     end
 
     test "invalid options return error for zstd" do
@@ -106,6 +110,11 @@ defmodule ExCodecsTest do
     test "decompressing invalid data returns error" do
       result = ExCodecs.decode(:zstd, "not compressed data")
       assert match?({:error, %ExCodecs.Error{}}, result)
+    end
+
+    test "decode with unsupported codec returns error" do
+      result = ExCodecs.decode(:unknown_codec, <<1, 2, 3>>)
+      assert match?({:error, %ExCodecs.Error{reason: :unsupported_codec}}, result)
     end
   end
 
@@ -140,6 +149,30 @@ defmodule ExCodecsTest do
 
     test "returns error for unknown codec" do
       assert {:error, :unsupported_codec} = ExCodecs.codec_info(:nonexistent)
+    end
+  end
+
+  describe "encode with non-binary data" do
+    test "returns error for integer" do
+      assert {:error, %ExCodecs.Error{}} = ExCodecs.encode(:zstd, 42)
+    end
+
+    test "returns error for list" do
+      assert {:error, %ExCodecs.Error{}} = ExCodecs.encode(:zstd, [1, 2, 3])
+    end
+
+    test "returns error for nil" do
+      assert {:error, %ExCodecs.Error{}} = ExCodecs.encode(:zstd, nil)
+    end
+  end
+
+  describe "decode with non-binary data" do
+    test "returns error for integer" do
+      assert {:error, %ExCodecs.Error{}} = ExCodecs.decode(:zstd, 42)
+    end
+
+    test "returns error for list" do
+      assert {:error, %ExCodecs.Error{}} = ExCodecs.decode(:zstd, [1, 2, 3])
     end
   end
 end

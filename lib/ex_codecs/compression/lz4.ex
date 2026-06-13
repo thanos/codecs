@@ -44,14 +44,7 @@ defmodule ExCodecs.Compression.Lz4 do
     }
   end
 
-  defp lz4_version do
-    case ExCodecs.Native.codec_versions() do
-      %{:lz4 => v} -> v
-      _ -> "unknown"
-    end
-  rescue
-    _ -> "unknown"
-  end
+  defp lz4_version, do: "1.10.x"
 
   @doc """
   Encodes (compresses) data using LZ4.

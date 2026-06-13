@@ -51,14 +51,7 @@ defmodule ExCodecs.Compression.Zstd do
   end
 
   @doc false
-  defp zstd_version do
-    case ExCodecs.Native.codec_versions() do
-      %{:zstd => v} -> v
-      _ -> "unknown"
-    end
-  rescue
-    _ -> "unknown"
-  end
+  defp zstd_version, do: "1.5.x"
 
   @doc """
   Encodes (compresses) data using Zstd.

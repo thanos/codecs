@@ -12,7 +12,8 @@ config :excoveralls,
     treat_no_relevant_lines_as_covered: false,
     local_only: true
   ],
-  skip_files: [
+skip_files: [
     ~r"test/support/",
-    ~r"bench/"
+    ~r"bench/",
+    ~r"lib.ex_codecs.native.ex$"
   ]

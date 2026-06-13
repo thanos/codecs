@@ -1,3 +1,4 @@
+# coveralls-ignore-start
 defmodule ExCodecs.Native do
   @moduledoc """
   Native NIF module providing Rust-based compression implementations via Rustler.
@@ -6,6 +7,9 @@ defmodule ExCodecs.Native do
   and Blosc2 compression/decompression. If the NIF fails to load, all
   functions fall back to `:erlang.nif_error(:nif_not_loaded)`, and codecs
   are registered as unavailable at startup.
+
+  > **Note**: This module is excluded from coverage because all functions are
+  > Rustler NIF stubs that are replaced at load time by the native implementation.
   """
 
   use Rustler,
@@ -46,3 +50,4 @@ defmodule ExCodecs.Native do
   @doc false
   def nif_loaded?, do: not function_exported?(__MODULE__, :zstd_compress, 2)
 end
+# coveralls-ignore-stop
