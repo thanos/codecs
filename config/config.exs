@@ -1,9 +1,12 @@
 import Config
 
-# Force local NIF compilation in all environments. This ensures CI and local
-# dev always build from source. It does NOT affect downstream users — their own
-# config takes precedence. Once precompiled artifacts are published to GitHub
-# Releases, end users will download them automatically via RustlerPrecompiled.
-config :rustler_precompiled, :force_build, ex_codecs: true
-
-import_config "#{config_env()}.exs"
+# In dev/test, build the NIF from source so `mix compile` and `mix test`
+# work without precompiled artifacts. Release consumers use precompiled NIFs.
+#
+# CI and release workflows can also set EX_CODECS_BUILD=1 or
+# RUSTLER_PRECOMPILED_FORCE_BUILD_ALL=1 to force source compilation
+# (e.g. the publish_hex job in .github/workflows/release.yml).
+if config_env() in [:dev, :test] do
+  config :rustler_precompiled, :force_build, ex_codecs: true
+  import_config "#{config_env()}.exs"
+end
