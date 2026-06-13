@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "1.85"
+
+jobs:
+  test:
+    name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.20"
+            otp: "28.3.1"
+          - elixir: "1.19.5"
+            otp: "28.3.1"
+            lint: true
+            coverage: true
+          - elixir: "1.18.4"
+            otp: "27.3"
+          - elixir: "1.17.3"
+            otp: "26.2"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: test-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            test-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+      - run: mix deps.get
+      - run: mix deps.compile
+      - name: Check formatting
+        if: ${{ matrix.lint }}
+        run: mix format --check-formatted
+      - name: Compile with warnings as errors
+        if: ${{ matrix.lint }}
+        run: mix compile --warnings-as-errors
+      - run: mix test --trace
+      - name: Run coverage
+        if: ${{ matrix.coverage }}
+        run: mix coveralls.github
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  quality:
+    name: Code Quality
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.3.1"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            native/ex_codecs_native/target
+          key: quality-${{ runner.os }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            quality-${{ runner.os }}-mix-
+      - run: mix deps.get
+      - run: mix deps.compile
+      - run: mix credo --strict
+      - name: Restore PLT cache
+        uses: actions/cache@v4
+        id: plt-cache
+        with:
+          path: priv/plts
+          key: plt-${{ runner.os }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            plt-${{ runner.os }}-mix-
+      - name: Create PLTs
+        if: steps.plt-cache.outputs.cache-hit != 'true'
+        run: mix dialyzer --plt
+      - run: mix dialyzer --format github
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.3.1"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            native/ex_codecs_native/target
+          key: docs-${{ runner.os }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            docs-${{ runner.os }}-mix-
+      - run: mix deps.get
+      - run: mix deps.compile
+      - run: mix docs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ex_codecs-docs
+          path: doc/

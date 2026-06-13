@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  ELIXIR_VERSION: "1.19.5"
+  OTP_VERSION: "28.3.1"
+  RUST_VERSION: "1.85"
+
+jobs:
+  precompile:
+    name: Precompile NIF (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+            rust_flags: ""
+          - os: macos-14
+            target: aarch64-apple-darwin
+            rust_flags: ""
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            rust_flags: ""
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-musl
+            rust_flags: ""
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            rust_flags: ""
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-musl
+            rust_flags: ""
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            rust_flags: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation dependencies (Linux GNU aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install cross-compilation dependencies (Linux musl)
+        if: endsWith(matrix.target, '-unknown-linux-musl')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install cross-compilation dependencies (Linux musl aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
+          sudo ln -s /usr/aarch64-linux-gnu/bin/ld /usr/bin/aarch64-linux-gnu-ld
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: nif-${{ matrix.target }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            nif-${{ matrix.target }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+
+      - name: Fetch dependencies
+        run: mix deps.get
+
+      - name: Precompile NIF
+        env:
+          RUSTFLAGS: ${{ matrix.rust_flags }}
+          MIX_ENV: prod
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: mix rustler_precompiled.download --only-local --nif-version 2.17 || mix rustler_precompiled.build --release --nif-version 2.17
+
+      - name: Upload NIF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nif-${{ matrix.target }}
+          path: priv/native/*.so
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    name: Publish to Hex
+    needs: precompile
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Fetch dependencies
+        run: mix deps.get
+
+      - name: Download all NIF artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: priv/native/
+          merge-multiple: true
+
+      - name: Build package
+        run: mix hex.build
+
+      - name: Publish to Hex
+        run: mix hex.publish --yes
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ex_codecs-*.tar

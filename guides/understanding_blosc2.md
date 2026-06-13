@@ -1,0 +1,331 @@
+# Understanding Blosc2
+
+Blosc2 is a meta-compressor designed for high-performance compression of binary data, especially numerical arrays. This guide explains how Blosc2 works, its unique features (shuffle filters, internal codecs, multi-threading), and how to use it effectively in ExCodecs.
+
+## Overview
+
+Blosc2 is not a compression algorithm itself. It is a **meta-compressor**: a framework that orchestrates other compressors (called "codecs" or "compressors" in Blosc2 terminology) and adds pre-processing and post-processing stages around them.
+
+The key innovation in Blosc2 is combining:
+
+1. **Shuffle filters** that reorganize bytes to improve compressibility of typed data.
+2. **Pluggable internal compressors** (LZ4, LZ4HC, BloscLZ, Zstd, Snappy, Zlib).
+3. **Multi-threaded compression/decompression** for parallel block processing.
+4. **Block-based operation** that enables partial decompression.
+
+ExCodecs exposes Blosc2 as a first-class codec with configurable internal compressor, compression level, shuffle mode, and other parameters.
+
+## How Blosc2 Works
+
+Blosc2 processes data in a pipeline:
+
+```
+Input Binary
+    |
+    v
+[1] Split into blocks (blocksize or auto)
+    |
+    v
+[2] Apply shuffle filter (none / byte / bit)
+    |
+    v
+[3] Compress each block with internal codec
+    |
+    v
+[4] Assemble Blosc2 frame header + compressed blocks
+    |
+    v
+Output Binary
+```
+
+Decompression reverses the pipeline:
+
+```
+Input Binary (Blosc2 frame)
+    |
+    v
+[1] Parse frame header
+    |
+    v
+[2] Decompress each block with internal codec
+    |
+    v
+[3] Apply inverse shuffle filter
+    |
+    v
+[4] Concatenate blocks
+    |
+    v
+Output Binary (original)
+```
+
+### Step 1: Block Splitting
+
+Blosc2 splits the input into blocks of configurable size. Smaller blocks enable:
+
+- Parallel processing (different blocks on different threads).
+- Partial decompression (read only the blocks you need).
+- Better cache utilization during compression.
+
+The `blocksize` parameter controls this. A value of `0` lets Blosc2 choose automatically based on the input size and number of threads.
+
+### Step 2: Shuffle Filters
+
+The shuffle filter is Blosc2's most powerful feature for typed data. It reorders bytes within elements before compression:
+
+**Byte Shuffle** (`shuffle: :byte`):
+
+Groups bytes by their position within each element:
+
+```
+Original (4x 32-bit integers):
+  [A0 A1 A2 A3] [B0 B1 B2 B3] [C0 C1 C2 C3] [D0 D1 D2 D3]
+
+After byte shuffle:
+  [A0 B0 C0 D0] [A1 B1 C1 D1] [A2 B2 C2 D2] [A3 B3 C3 D3]
+```
+
+High-order bytes (A3, B3, C3, D3) often have similar values (e.g., mostly zeros for positive integers). Grouping them together makes the data far more compressible.
+
+**Bit Shuffle** (`shuffle: :bit`):
+
+The same principle at the bit level, providing even more correlation for certain data types (e.g., floating-point values where the sign bit and exponent are similar across elements).
+
+**No Shuffle** (`shuffle: :none`):
+
+Skip the shuffle step. Use this for data that does not have a regular element structure.
+
+### Step 3: Internal Compression
+
+Each (possibly shuffled) block is compressed using one of several codecs:
+
+| Codec      | Description                                  | Speed         | Ratio     |
+|------------|----------------------------------------------|---------------|-----------|
+| `:blosclz` | Blosc's custom LZ-based codec                | Very Fast     | Moderate  |
+| `:lz4`     | LZ4 (default)                                | Very Fast     | Moderate  |
+| `:lz4hc`   | LZ4 Higher Compression                       | Moderate      | Good      |
+| `:snappy`  | Snappy                                       | Very Fast     | Low-Moderate |
+| `:zstd`    | Zstandard                                     | Fast          | High      |
+| `:zlib`    | Zlib (Deflate)                                | Moderate      | Good      |
+
+The choice of internal codec determines the speed/ratio tradeoff within each block. Blosc2 adds the shuffle filtering on top, so the effective ratio can be much higher than using the same codec directly.
+
+### Step 4: Frame Assembly
+
+Blosc2 assembles the compressed blocks into a frame with a header containing:
+
+- The decompressed size.
+- The block size.
+- The internal codec, compression level, and shuffle mode.
+- The element typesize.
+- The number of threads used.
+- Checksums for data integrity.
+
+This header allows decompression without any external metadata.
+
+## Using Blosc2 in ExCodecs
+
+### Basic Usage
+
+```elixir
+# Default: LZ4 inner codec, level 5, byte shuffle, typesize 8
+{:ok, compressed} = ExCodecs.encode(:blosc2, data)
+{:ok, original} = ExCodecs.decode(:blosc2, compressed)
+```
+
+### With Zstd Inner Codec
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:blosc2, data,
+  cname: :zstd,
+  clevel: 5,
+  shuffle: :byte,
+  typesize: 8
+)
+```
+
+### With No Shuffle (General Binary Data)
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:blosc2, data,
+  cname: :zstd,
+  clevel: 3,
+  shuffle: :none
+)
+```
+
+### With Bit Shuffle (Maximum Ratio for Floats)
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:blosc2, data,
+  cname: :zstd,
+  clevel: 9,
+  shuffle: :bit,
+  typesize: 4
+)
+```
+
+### Multi-Threaded Compression
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:blosc2, data,
+  cname: :lz4,
+  clevel: 5,
+  shuffle: :byte,
+  typesize: 8,
+  numthreads: 4
+)
+```
+
+## Configuration Options
+
+| Option        | Type             | Default    | Description                                         |
+|---------------|------------------|------------|-----------------------------------------------------|
+| `:cname`      | atom             | `:lz4`     | Internal compressor (`:lz4`, `:lz4hc`, `:blosclz`, `:zstd`, `:snappy`, `:zlib`) |
+| `:clevel`    | integer (0-9)    | 5          | Compression level (0 = no compression)             |
+| `:shuffle`   | atom             | `:byte`    | Shuffle filter (`:none`, `:byte`, `:bit`)          |
+| `:typesize`  | integer (1-256)  | 8          | Element size in bytes for shuffle                   |
+| `:blocksize` | integer          | 0          | Block size in bytes (0 = automatic)                |
+| `:numthreads`| integer          | 1          | Number of threads for parallel compression          |
+
+### Choosing `cname` (Internal Codec)
+
+- **`:lz4`** (default): Best for speed-sensitive applications. The shuffle filter provides most of the ratio improvement.
+- **`:zstd`**: Best ratio when combined with shuffle. Use `:zstd` with `clevel: 5-9` for maximum compression of numerical data.
+- **`:lz4hc`**: Moderate speed, better ratio than `:lz4`. Good balance.
+- **`:blosclz`**: Blosc's proprietary LZ variant. Similar to `:lz4`.
+- **`:snappy`**: Fastest, lowest ratio. Rarely the best choice since `:lz4` is fast and better.
+- **`:zlib`**: Moderate speed, good ratio. Available for compatibility.
+
+### Choosing `shuffle`
+
+- **`:byte`** (default): Best for most typed data. Groups bytes by position within each element. Recommended for float64, int32, and similar numeric types.
+- **`:bit`**: Finest granularity. Groups bits by position. Can improve ratio further for floating-point data where sign/exponent bits are similar.
+- **`:none`**: No pre-processing. Use for general binary data without regular element structure, or when the shuffle adds overhead without ratio improvement.
+
+### Choosing `typesize`
+
+The `typesize` tells Blosc2 how many bytes each element occupies. It is critical for the shuffle filter to work correctly.
+
+| Data Type           | typesize |
+|---------------------|----------|
+| `:float64` / double | 8        |
+| `:float32` / float  | 4        |
+| `:int64`             | 8        |
+| `:int32`             | 4        |
+| `:int16`             | 2        |
+| `:int8`              | 1        |
+| Raw binary (no shuffle)| 1      |
+
+Setting `typesize: 1` with `shuffle: :byte` is equivalent to `shuffle: :none` because there is no intra-element byte grouping.
+
+Setting `typesize: 8` with `shuffle: :byte` on float64 arrays typically provides 2-10x ratio improvement over compressing the raw data directly.
+
+**Important**: The data length should ideally be a multiple of `typesize` for the shuffle filter to work correctly. If the data length is not a multiple of `typesize`, Blosc2 will still work but the last partial element will not benefit from shuffling.
+
+### Choosing `clevel`
+
+| clevel | Behavior                                  |
+|--------|-------------------------------------------|
+| 0      | No compression (shuffle only)             |
+| 1      | Fastest compression                       |
+| 5      | Default, good balance                     |
+| 9      | Maximum compression for the chosen codec  |
+
+With `clevel: 0`, Blosc2 applies the shuffle filter but does not compress. This is useful when you want the reordering benefit without compression, or as a diagnostic to see how much shuffle alone helps.
+
+### Choosing `numthreads`
+
+- **1** (default): Single-threaded. No thread overhead. Best for small data.
+- **2-4**: Good for medium-sized data on multi-core systems.
+- **8+**: Best for large data (100 MB+) on servers with many cores.
+
+Multi-threading works by splitting the input into blocks and compressing each block in a separate thread. The overhead of thread creation and synchronization means multi-threading only helps when the data is large enough to amortize this cost.
+
+On the BEAM, NIFs run in DirtyCpu schedulers. Blosc2's threads are native OS threads spawned by the Rust `blosc2` crate, which operate independently of BEAM schedulers. Be mindful of total system CPU usage when using high thread counts.
+
+## The Blosc2 Frame Format
+
+A Blosc2 compressed frame has the following structure:
+
+```
++----------+-----------+---------+-----------+----------+
+| Header   | Extended  | Block 0 | Block 1   | Block N  |
+| (16+ B)  | Header    |         |           |          |
++----------+-----------+---------+-----------+----------+
+```
+
+The header contains:
+- Magic number and version
+- Decompressed size
+- Compressed size
+- Block size
+- Typesize
+- Codec, compression level, and shuffle mode
+- Number of threads
+- Filter pipeline information
+
+Each block contains:
+- Block header (compressed size, decompressed size)
+- Compressed data
+
+This format enables:
+- **Partial decompression**: Read and decompress specific blocks without processing the entire frame.
+- **Multi-threaded decompression**: Decompress blocks in parallel.
+- **Metadata**: All parameters needed for decompression are in the header.
+
+## When to Use Blosc2
+
+### Use Blosc2 When
+
+- **Data is numerical arrays.** Float64, int32, and other typed data benefit enormously from shuffle filters.
+- **You need fine-grained control.** Blosc2 offers the most parameters of any codec in ExCodecs.
+- **Data has regular element structure.** If data length is a multiple of a known typesize, Blosc2 can exploit this.
+- **You want multi-threaded compression.** Blosc2 is the only codec with multi-threading support.
+- **You need partial decompression.** The block structure enables reading specific blocks.
+
+### Consider Alternatives When
+
+- **Data is unstructured binary.** If there is no regular element structure, the shuffle filter provides no benefit, and Zstd or LZ4 directly may be simpler.
+- **Data is small.** Blosc2's frame header overhead makes it less efficient for data under 256 bytes.
+- **You want simplicity.** Blosc2 has many configuration knobs. Zstd with `level: 3` is simpler and effective for most data.
+
+## Ratio Improvement from Shuffle
+
+The shuffle filter is Blosc2's key advantage for numerical data. Here are typical ratio improvements:
+
+| Data Type         | Zstd Alone | Blosc2 + Zstd + Byte Shuffle | Improvement |
+|-------------------|------------|-------------------------------|-------------|
+| float64 array     | 2.5:1      | 5:1 - 10:1                    | 2-4x        |
+| int32 array       | 2.0:1      | 4:1 - 8:1                     | 2-4x        |
+| Mixed JSON        | 3.0:1      | 3.0:1 (shuffle: :none)        | No change   |
+| Random binary     | 1.01:1     | 1.01:1                        | No change   |
+
+For numerical data, the improvement from shuffle is dramatic and consistent. The more regular the data (arrays of identical types), the greater the benefit.
+
+## Comparison with Other Codecs
+
+| Property           | Blosc2            | Zstd           | LZ4            |
+|--------------------|-------------------|----------------|----------------|
+| Category            | Meta-compressor  | Algorithm      | Algorithm      |
+| Shuffle Filters     | Yes (byte, bit)   | No             | No             |
+| Inner Codecs        | 6 options         | N/A            | N/A            |
+| Multi-threading     | Yes               | No             | No             |
+| Best For            | Numerical arrays | General data   | Speed          |
+| Configuration       | Extensive         | Level + window | Level          |
+
+## Best Practices
+
+1. **Set `typesize` correctly.** Match it to your element size (4 for float32, 8 for float64). Wrong typesize reduces or eliminates shuffle benefits.
+
+2. **Use `shuffle: :byte` as the default for typed data.** It provides the most benefit for the least overhead. Switch to `:bit` for floating-point data where exponent bits correlate.
+
+3. **Use `shuffle: :none` for unstructured data.** Shuffle on unstructured data adds CPU overhead without ratio improvement.
+
+4. **Start with `cname: :lz4, clevel: 5` for speed, or `cname: :zstd, clevel: 5` for ratio.** These are the most commonly useful configurations.
+
+5. **Use `numthreads > 1` only for data over 1 MB.** Thread overhead makes multi-threading counterproductive for small data.
+
+6. **Benchmark with your actual data.** The effectiveness of shuffle depends heavily on the data. Always measure, do not guess.
+
+7. **Ensure data length is a multiple of typesize.** If possible, pad your data to a typesize boundary before compressing with Blosc2.

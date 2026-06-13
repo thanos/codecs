@@ -1,0 +1,294 @@
+# Codec Comparison
+
+```elixir
+Mix.install([
+  {:ex_codecs, path: Path.join(__DIR__, "..")},
+  {:kino, "~> 0.14"},
+  {:vega_lite, "~> 0.1"}
+])
+```
+
+## Setup: Test Datasets
+
+```elixir
+codecs = [:lz4, :snappy, :zstd, :bzip2, :blosc2]
+
+random_data = :crypto.strong_rand_bytes(65536)
+
+repetitive_text = String.duplicate("The quick brown fox jumps over the lazy dog. ", 2000)
+
+semi_structured = Enum.join(for i <- 1..5000 do
+  "id=#{i}&name=user#{rem(i, 100)}&score=#{:rand.uniform(1000)}&active=#{rem(i, 2) == 0}"
+end, "&")
+
+float_array = for i <- 1..8192, into: <<>>, do: <<i * 0.125::float-size(64)-little>>
+
+datasets = %{
+  "Random bytes" => random_data,
+  "Repetitive text" => repetitive_text,
+  "Semi-structured" => semi_structured,
+  "Float64 array" => float_array
+}
+
+dataset_sizes = for {name, data} <- datasets, into: %{} do
+  {name, byte_size(data)}
+end
+
+IO.puts("Dataset sizes:")
+for {name, size} <- dataset_sizes do
+  IO.puts("  #{String.pad_trailing(name, 20)} #{size} bytes")
+end
+```
+
+## Compression Ratio Benchmarks
+
+```elixir
+compression_results = for {dname, data} <- datasets, codec <- codecs do
+  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte], else: []
+  {:ok, enc} = ExCodecs.encode(codec, data, opts)
+  %{
+    dataset: dname,
+    codec: inspect(codec),
+    original: byte_size(data),
+    compressed: byte_size(enc),
+    ratio_pct: Float.round(100 * byte_size(enc) / byte_size(data), 1),
+    savings_pct: Float.round(100 * (1 - byte_size(enc) / byte_size(data)), 1)
+  }
+end
+
+Kino.DataTable.new(compression_results)
+```
+
+### Compression Ratio Chart
+
+```elixir
+VegaLite.new(width: 700, height: 350)
+|> VegaLite.data_from_values(compression_results)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "codec", type: :nominal, sort: ["lz4", "snappy", "zstd", "bzip2", "blosc2"])
+|> VegaLite.encode_field(:y, "ratio_pct", type: :quantitative, title: "Compressed Size (%)", scale: [domain: [0, 110]])
+|> VegaLite.encode_field(:color, "codec", type: :nominal)
+|> VegaLite.encode_field(:column, "dataset", type: :nominal)
+|> Kino.VegaLite.new()
+```
+
+### Space Savings Chart
+
+```elixir
+VegaLite.new(width: 700, height: 350)
+|> VegaLite.data_from_values(compression_results)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "codec", type: :nominal, sort: ["lz4", "snappy", "zstd", "bzip2", "blosc2"])
+|> VegaLite.encode_field(:y, "savings_pct", type: :quantitative, title: "Space Saved (%)")
+|> VegaLite.encode_field(:color, "codec", type: :nominal)
+|> VegaLite.encode_field(:column, "dataset", type: :nominal)
+|> Kino.VegaLite.new()
+```
+
+## Speed Benchmarks
+
+```elixir
+iterations = 20
+
+speed_results = for {dname, data} <- datasets, codec <- codecs do
+  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte], else: []
+  {:ok, enc} = ExCodecs.encode(codec, data, opts)
+
+  {enc_time, _} = :timer.tc(fn ->
+    for _ <- 1..iterations, do: ExCodecs.encode(codec, data, opts)
+  end)
+
+  {dec_time, _} = :timer.tc(fn ->
+    for _ <- 1..iterations, do: ExCodecs.decode(codec, enc)
+  end)
+
+  enc_throughput = Float.round(byte_size(data) * iterations / enc_time, 1)
+  dec_throughput = Float.round(byte_size(data) * iterations / dec_time, 1)
+
+  %{
+    dataset: dname,
+    codec: inspect(codec),
+    encode_time_us: div(enc_time, iterations),
+    decode_time_us: div(dec_time, iterations),
+    encode_mbps: Float.round(enc_throughput, 1),
+    decode_mbps: Float.round(dec_throughput, 1)
+  }
+end
+
+Kino.DataTable.new(speed_results)
+```
+
+### Encode Speed Chart
+
+```elixir
+VegaLite.new(width: 700, height: 350)
+|> VegaLite.data_from_values(speed_results)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "codec", type: :nominal, sort: ["lz4", "snappy", "zstd", "bzip2", "blosc2"])
+|> VegaLite.encode_field(:y, "encode_time_us", type: :quantitative, title: "Encode Time (µs)")
+|> VegaLite.encode_field(:color, "codec", type: :nominal)
+|> VegaLite.encode_field(:column, "dataset", type: :nominal)
+|> Kino.VegaLite.new()
+```
+
+### Decode Speed Chart
+
+```elixir
+VegaLite.new(width: 700, height: 350)
+|> VegaLite.data_from_values(speed_results)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "codec", type: :nominal, sort: ["lz4", "snappy", "zstd", "bzip2", "blosc2"])
+|> VegaLite.encode_field(:y, "decode_time_us", type: :quantitative, title: "Decode Time (µs)")
+|> VegaLite.encode_field(:color, "codec", type: :nominal)
+|> VegaLite.encode_field(:column, "dataset", type: :nominal)
+|> Kino.VegaLite.new()
+```
+
+## Memory Usage
+
+```elixir
+memory_results = for codec <- codecs do
+  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte], else: []
+  {:ok, info} = ExCodecs.codec_info(codec)
+
+  mem_before = Process.info(self(), :heap_size) |> elem(1)
+  {:ok, enc} = ExCodecs.encode(codec, float_array, opts)
+  {:ok, _dec} = ExCodecs.decode(codec, enc)
+  mem_after = Process.info(self(), :heap_size) |> elem(1)
+
+  %{
+    codec: inspect(codec),
+    category: info.category,
+    configurable: info.configurable?,
+    streaming: info.streaming?,
+    heap_growth_words: mem_after - mem_before
+  }
+end
+
+Kino.DataTable.new(memory_results)
+```
+
+## Codec Profiles
+
+```elixir
+profile_data = %{
+  "Speed King" => %{
+    best: [:lz4, :snappy],
+    why: "Fastest encode/decode, ideal for hot paths, caching, and real-time systems"
+  },
+  "Balanced" => %{
+    best: [:zstd],
+    why: "Good ratio with fast decompression. Default choice for most workloads"
+  },
+  "Maximum Ratio" => %{
+    best: [:bzip2],
+    why: "Smallest output. Accept slower speed for archival and cold storage"
+  },
+  "Numeric Arrays" => %{
+    best: [:blosc2],
+    why: "Shuffle+compress slashes size of typed data. Threaded for large arrays"
+  }
+}
+
+for {profile, %{best: best, why: why}} <- profile_data do
+  IO.puts("## #{profile}")
+  IO.puts("  Codecs: #{inspect(best)}")
+  IO.puts("  #{why}\n")
+end
+```
+
+## Interactive Codec Selector
+
+```elixir
+use_case = Kino.Input.select("Your use case:", [
+  "Real-time / low latency" => :speed,
+  "General purpose" => :balanced,
+  "Maximum compression / archival" => :ratio,
+  "Numerical / scientific data" => :numeric,
+  "Small payloads / low overhead" => :tiny
+])
+
+data_type = Kino.Input.select("Data type:", [
+  "Text / JSON" => :text,
+  "Binary blobs" => :binary,
+  "Typed arrays (floats, ints)" => :array,
+  "Mixed" => :mixed
+])
+
+Kino.Layout.grid([use_case, data_type], columns: 2)
+```
+
+```elixir
+use_case_val = Kino.Input.read(use_case)
+data_type_val = Kino.Input.read(data_type)
+
+recommendation = case {use_case_val, data_type_val} do
+  {:speed, _} -> {:lz4, "Fastest compression/decompression. Minimal latency overhead."}
+  {:tiny, _} -> {:snappy, "Low overhead even on very small payloads. No configuration needed."}
+  {:ratio, :array} -> {:blosc2, "Shuffle+compress gives best ratios on typed arrays."}
+  {:ratio, _} -> {:bzip2, "Highest compression ratio for general data. Slow but compact."}
+  {:numeric, _} -> {:blosc2, "Purpose-built for numerical data with shuffle filters and threading."}
+  {:balanced, :array} -> {:blosc2, "Good ratio on typed data with decent speed."}
+  {:balanced, _} -> {:zstd, "Best all-around codec. Configurable from fast (level 1) to compact (level 22)."}
+end
+
+{codec, reason} = recommendation
+{:ok, info} = ExCodecs.codec_info(codec)
+
+IO.puts("Recommended codec: #{inspect(codec)}")
+IO.puts("Reason: #{reason}")
+IO.puts("Configurable: #{info.configurable?}")
+IO.puts("Streaming: #{info.streaming?}")
+
+default_opts = case codec do
+  :zstd -> [level: 3]
+  :lz4 -> [level: 1]
+  :bzip2 -> [block_size: 9]
+  :blosc2 -> [cname: :zstd, clevel: 5, shuffle: :byte]
+  :snappy -> []
+end
+IO.puts("Suggested options: #{inspect(default_opts)}")
+```
+
+## Decision Flowchart
+
+```elixir
+flowchart = """
+When choosing a codec, follow this decision path:
+
+1. Is your data typed numerical arrays?
+   YES → Use Blosc2 (with appropriate shuffle and typesize)
+   NO  → Continue
+
+2. Is latency critical (hot path, real-time)?
+   YES → Use LZ4 (fastest) or Snappy (low overhead)
+   NO  → Continue
+
+3. Is storage cost the primary concern?
+   YES → Use Bzip2 (best ratio) or Zstd with high level
+   NO  → Continue
+
+4. Default choice:
+   → Use Zstd (level 3)
+   → Good ratio, fast decompression, configurable
+"""
+
+IO.puts(flowchart)
+```
+
+## Codec Feature Matrix
+
+| Feature | LZ4 | Snappy | Zstd | Bzip2 | Blosc2 |
+|---|---|---|---|---|---|
+| Speed | Very Fast | Very Fast | Fast | Slow | Medium |
+| Ratio | Low | Low | High | Very High | High (arrays) |
+| Configurable | Level 1–16 | No | Level 1–22 | Block 1–9 | Many options |
+| Streaming | No | No | Yes | No | Yes |
+| Best For | Hot paths | Short data | General | Archival | Arrays |
+| Shuffle | — | — | — | — | Byte/Bit |
+| Multi-thread | No | No | No | No | Yes |
+
+## Next Steps
+
+- **[Building Storage Systems](04_building_storage_systems.livemd)** — production patterns and error handling
+- **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific data with Blosc2

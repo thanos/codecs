@@ -1,0 +1,224 @@
+# Compression Fundamentals
+
+```elixir
+Mix.install([
+  {:ex_codecs, path: Path.join(__DIR__, "..")},
+  {:kino, "~> 0.14"},
+  {:vega_lite, "~> 0.1"}
+])
+```
+
+## How Compression Works
+
+Compression algorithms exploit **redundancy** in data. The more patterns and repetition, the more compressible the data is — this is measured by **entropy**.
+
+```elixir
+# Low entropy: highly repetitive
+low_entropy = String.duplicate("AAAA", 4096)
+
+# High entropy: near-random data
+high_entropy = :crypto.strong_rand_bytes(16384)
+
+# Medium entropy: natural language text
+medium_entropy = String.duplicate("The quick brown fox jumps over the lazy dog. ", 200)
+
+for {label, data} <- [
+  {"Repetitive (low entropy)", low_entropy},
+  {"Natural text (medium)", medium_entropy},
+  {"Random bytes (high entropy)", high_entropy}
+] do
+  {:ok, z} = ExCodecs.encode(:zstd, data)
+  ratio = Float.round(byte_size(data) / byte_size(z), 2)
+  IO.puts("#{String.pad_trailing(label, 28)} | #{byte_size(data)} -> #{byte_size(z)} bytes | #{ratio}x ratio")
+end
+```
+
+## Lossless vs Lossy
+
+ExCodecs provides **lossless** codecs — decoded data is bit-for-bit identical to the original:
+
+```elixir
+data = :crypto.strong_rand_bytes(8192)
+
+for codec <- ExCodecs.available_codecs() do
+  {:ok, enc} = ExCodecs.encode(codec, data)
+  {:ok, dec} = ExCodecs.decode(codec, enc)
+  IO.puts("#{String.pad_trailing(inspect(codec), 10)} lossless: #{dec == data}")
+end
+```
+
+> Lossy codecs (JPEG, MP3, etc.) sacrifice exact reproduction for smaller size. These are not in ExCodecs' scope but could be added via the `ExCodecs.Codec` behaviour.
+
+## Compression Methods
+
+### Dictionary-Based (LZ4, Snappy, Zstd)
+
+These build a reference table of repeated substrings during compression:
+
+```elixir
+# Dictionary methods excel on repeated patterns
+text = String.duplicate("compression compresses compressed compressor ", 200)
+
+{:ok, lz4_enc} = ExCodecs.encode(:lz4, text)
+{:ok, zstd_enc} = ExCodecs.encode(:zstd, text)
+{:ok, snappy_enc} = ExCodecs.encode(:snappy, text)
+
+IO.puts("Original: #{byte_size(text)} bytes")
+IO.puts("LZ4:     #{byte_size(lz4_enc)} bytes (#{Float.round(100 * byte_size(lz4_enc) / byte_size(text), 1)}%)")
+IO.puts("Zstd:    #{byte_size(zstd_enc)} bytes (#{Float.round(100 * byte_size(zstd_enc) / byte_size(text), 1)}%)")
+IO.puts("Snappy:  #{byte_size(snappy_enc)} bytes (#{Float.round(100 * byte_size(snappy_enc) / byte_size(text), 1)}%)")
+```
+
+### Block-Sorting (Bzip2)
+
+Bzip2 uses the Burrows-Wheeler Transform to group similar characters, then applies Huffman coding:
+
+```elixir
+# Bzip2 achieves excellent ratios on text-heavy data
+{:ok, bz_enc} = ExCodecs.encode(:bzip2, text)
+IO.puts("Bzip2:   #{byte_size(bz_enc)} bytes (#{Float.round(100 * byte_size(bz_enc) / byte_size(text), 1)}%)")
+```
+
+### Shuffle + Compress (Blosc2)
+
+Blosc2 reorders bytes to create longer runs before applying an internal compressor:
+
+```elixir
+# Numerical data with patterns across float64 values
+floats = for i <- 1..2048, into: <<>>, do: <<i * 0.125::float-size(64)-little>>
+
+{:ok, blosc_none} = ExCodecs.encode(:blosc2, floats, shuffle: :none)
+{:ok, blosc_byte} = ExCodecs.encode(:blosc2, floats, shuffle: :byte)
+{:ok, blosc_bit} = ExCodecs.encode(:blosc2, floats, shuffle: :bit)
+{:ok, zstd_plain} = ExCodecs.encode(:zstd, floats)
+
+IO.puts("Original:        #{byte_size(floats)} bytes")
+IO.puts("Blosc2 (none):   #{byte_size(blosc_none)} bytes")
+IO.puts("Blosc2 (byte):   #{byte_size(blosc_byte)} bytes")
+IO.puts("Blosc2 (bit):    #{byte_size(blosc_bit)} bytes")
+IO.puts("Zstd (plain):    #{byte_size(zstd_plain)} bytes")
+```
+
+## Speed vs Ratio Tradeoffs
+
+```elixir
+# Generate test datasets
+datasets = %{
+  "JSON" => Jason.encode!(%{for i <- 1..500, do: %{id: i, name: "item_#{i}", value: :rand.uniform(1000)}}),
+}
+
+# For this demo, build JSON-like text manually
+json_like = "[" <> Enum.join(for i <- 1..500 do
+  "{\"id\":#{i},\"name\":\"item_#{i}\",\"value\":#{:rand.uniform(1000)}}"
+end, ",") <> "]"
+
+datasets = %{
+  "Repetitive" => String.duplicate("abcdefghij", 5000),
+  "Natural text" => String.duplicate("The quick brown fox jumps over the lazy dog. ", 300),
+  "Semi-random" => for _ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>
+}
+
+results = for {label, data} <- datasets, codec <- [:lz4, :snappy, :zstd, :bzip2] do
+  {:ok, enc} = ExCodecs.encode(codec, data)
+  {time, _} = :timer.tc(fn -> for _ <- 1..50, do: ExCodecs.encode(codec, data) end)
+  {time_d, _} = :timer.tc(fn -> for _ <- 1..50, do: ExCodecs.decode(codec, enc) end)
+  %{
+    dataset: label,
+    codec: inspect(codec),
+    original_size: byte_size(data),
+    compressed_size: byte_size(enc),
+    ratio: Float.round(100 * byte_size(enc) / byte_size(data), 1),
+    encode_us: div(time, 50),
+    decode_us: div(time_d, 50)
+  }
+end
+
+Kino.DataTable.new(results)
+```
+
+### Compression Ratio Visualization
+
+```elixir
+VegaLite.new(width: 600, height: 400)
+|> VegaLite.data_from_values(results)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "codec", type: :nominal)
+|> VegaLite.encode_field(:y, "ratio", type: :quantitative, title: "Compressed size (%)")
+|> VegaLite.encode_field(:color, "dataset", type: :nominal)
+|> VegaLite.encode_field(:column, "dataset", type: :nominal)
+|> Kino.VegaLite.new()
+```
+
+### Speed Visualization
+
+```elixir
+VegaLite.new(width: 600, height: 400)
+|> VegaLite.data_from_values(results)
+|> VegaLite.mark(:bar)
+|> VegaLite.encode_field(:x, "codec", type: :nominal)
+|> VegaLite.encode_field(:y, "encode_us", type: :quantitative, title: "Encode time (µs)")
+|> VegaLite.encode_field(:color, "dataset", type: :nominal)
+|> VegaLite.encode_field(:column, "dataset", type: :nominal)
+|> Kino.VegaLite.new()
+```
+
+## When Not to Compress
+
+```elixir
+# Already-compressed data doesn't shrink further
+compressed_png = for _ <- 1..8192, into: <<>>, do: <<:rand.uniform(255)>>
+{:ok, after_zstd} = ExCodecs.encode(:zstd, compressed_png)
+
+IO.puts("Random data:          #{byte_size(compressed_png)} bytes")
+IO.puts("After Zstd compress:  #{byte_size(after_zstd)} bytes")
+IO.puts("Compressed data can actually GROW due to header overhead")
+```
+
+Rules of thumb:
+- **Don't compress encrypted or already-compressed data** — you waste CPU for no gain
+- **Avoid compressing tiny payloads** — the codec header overhead may exceed savings
+- **Consider latency** — LZ4/Snappy for hot paths, Bzip2 only for cold storage
+
+## Memory vs CPU Considerations
+
+```elixir
+# Higher compression levels trade CPU time and memory for smaller output
+data = String.duplicate("Hello, World! This is a compression test. ", 2000)
+
+IO.puts("Zstd compression levels vs output size:\n")
+IO.puts(String.pad_trailing("Level", 8) <> String.pad_trailing("Size (bytes)", 14) <> String.pad_trailing("Ratio %", 10) <> "Time (µs)")
+IO.puts(String.duplicate("-", 45))
+
+for level <- [1, 3, 5, 9, 15, 22] do
+  {:ok, enc} = ExCodecs.encode(:zstd, data, level: level)
+  {time, _} = :timer.tc(fn -> ExCodecs.encode(:zstd, data, level: level) end)
+  ratio = Float.round(100 * byte_size(enc) / byte_size(data), 1)
+  IO.puts(
+    String.pad_trailing("#{level}", 8) <>
+    String.pad_trailing("#{byte_size(enc)}", 14) <>
+    String.pad_trailing("#{ratio}", 10) <>
+    "#{time}"
+  )
+end
+```
+
+```elixir
+# Bzip2 block size affects memory usage
+IO.puts("\nBzip2 block sizes vs output size:\n")
+IO.puts(String.pad_trailing("Block", 8) <> String.pad_trailing("Size (bytes)", 14) <> "Ratio %")
+IO.puts(String.duplicate("-", 35))
+
+for bs <- 1..9 do
+  {:ok, enc} = ExCodecs.encode(:bzip2, data, block_size: bs)
+  ratio = Float.round(100 * byte_size(enc) / byte_size(data), 1)
+  IO.puts(String.pad_trailing("#{bs}", 8) <> String.pad_trailing("#{byte_size(enc)}", 14) <> "#{ratio}")
+end
+```
+
+## Key Takeaways
+
+1. **Entropy dominates** — random data barely compresses; repetitive data compresses well
+2. **No single best codec** — each excels for different data and latency requirements
+3. **Shuffle transforms** (Blosc2) dramatically improve compression of typed binary data
+4. **Compression level is a dial** — higher means smaller output but more CPU/memory
+5. **Measure your actual data** — use the [Codec Comparison](03_codec_comparison.livemd) livebook with your own datasets
