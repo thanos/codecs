@@ -41,8 +41,8 @@ defmodule ExCodecs.MixProject do
 
   defp deps do
     [
+      {:rustler, "~> 0.36", optional: true},
       {:rustler_precompiled, "~> 0.8"},
-      {:rustler, "~> 0.36", only: [:dev, :test]},
       {:stream_data, "~> 1.1", only: [:test, :dev]},
       {:excoveralls, "~> 0.18", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
