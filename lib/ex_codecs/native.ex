@@ -20,7 +20,7 @@ defmodule ExCodecs.Native do
     otp_app: :ex_codecs,
     crate: :ex_codecs_native,
     version: "0.1.0",
-    base_url: "https://github.com/ex-codecs/ex_codecs/releases/download/v0.1.0",
+    base_url: "https://github.com/thanos/codecs/releases/download/v0.1.0",
     mode: :release,
     nif_versions: ["2.17"],
     targets: [

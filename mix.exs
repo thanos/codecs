@@ -2,7 +2,7 @@ defmodule ExCodecs.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/ex-codecs/ex_codecs"
+  @source_url "https://github.com/thanos/codecs"
 
   def project do
     [
