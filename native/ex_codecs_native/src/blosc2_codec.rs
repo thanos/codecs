@@ -107,6 +107,7 @@ fn internal_decompress(data: &[u8], cname: u8) -> Result<Vec<u8>, ()> {
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
+#[allow(clippy::too_many_arguments)]
 pub fn blosc2_compress<'a>(
     env: Env<'a>,
     data: Binary,

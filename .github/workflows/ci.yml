@@ -28,6 +28,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |
@@ -52,6 +53,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |
@@ -76,6 +78,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |
@@ -100,6 +103,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |
@@ -123,8 +127,6 @@ jobs:
         include:
           - otp: "27"
             elixir: "1.18"
-          - otp: "27"
-            elixir: "1.17"
     steps:
       - uses: actions/checkout@v4
       - uses: erlef/setup-beam@v1
@@ -134,6 +136,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |
@@ -159,6 +162,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |
@@ -190,6 +194,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
       - uses: actions/cache@v4
         with:
           path: |

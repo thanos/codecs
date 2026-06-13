@@ -43,13 +43,13 @@ defmodule ExCodecs.Compression.ZstdTest do
     end
 
     test "handles repeated data efficiently" do
-      data = String.duplicate("AAAA", 10000)
+      data = String.duplicate("AAAA", 10_000)
       assert {:ok, compressed} = ExCodecs.Compression.Zstd.encode(data, [])
       assert byte_size(compressed) < byte_size(data) / 10
     end
 
     test "higher levels produce smaller output" do
-      data = :crypto.strong_rand_bytes(10000)
+      data = :crypto.strong_rand_bytes(10_000)
       {:ok, c1} = ExCodecs.Compression.Zstd.encode(data, level: 1)
       {:ok, c19} = ExCodecs.Compression.Zstd.encode(data, level: 19)
       assert byte_size(c19) <= byte_size(c1)
@@ -83,7 +83,7 @@ defmodule ExCodecs.Compression.ZstdTest do
   describe "round-trip property" do
     test "zstd round-trip preserves random data" do
       for _ <- 1..50 do
-        size = :rand.uniform(10000)
+        size = :rand.uniform(10_000)
         data = :crypto.strong_rand_bytes(size)
         {:ok, compressed} = ExCodecs.Compression.Zstd.encode(data, [])
         {:ok, decompressed} = ExCodecs.Compression.Zstd.decode(compressed, [])
