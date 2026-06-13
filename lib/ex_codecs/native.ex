@@ -1,5 +1,12 @@
 defmodule ExCodecs.Native do
-  @moduledoc false
+  @moduledoc """
+  Native NIF module providing Rust-based compression implementations via Rustler.
+
+  This module loads precompiled NIF binaries for Zstd, LZ4, Snappy, Bzip2,
+  and Blosc2 compression/decompression. If the NIF fails to load, all
+  functions fall back to `:erlang.nif_error(:nif_not_loaded)`, and codecs
+  are registered as unavailable at startup.
+  """
 
   use Rustler,
     otp_app: :ex_codecs,

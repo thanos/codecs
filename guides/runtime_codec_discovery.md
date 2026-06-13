@@ -161,7 +161,7 @@ One of the key design goals of ExCodecs is **graceful degradation**: the applica
 
 ### How It Works
 
-1. During application startup, `nif_loaded?/0` checks if the Rustler NIF is available.
+1. During application startup, the application checks if the Rustler NIF is available.
 2. If the NIF is loaded, codecs are registered normally with their modules.
 3. If the NIF is not loaded, codecs are registered as "unavailable" with `module: nil`.
 4. `ExCodecs.encode/3` and `ExCodecs.decode/3` check if the module is `nil` before calling it, returning `{:error, %ExCodecs.Error{reason: :codec_unavailable}}` for unavailable codecs.

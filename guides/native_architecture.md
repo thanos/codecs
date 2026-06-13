@@ -228,7 +228,7 @@ If the precompiled binary for the current platform is not available:
 2. This requires the Rust toolchain (`rustc`, `cargo`) and the Rust dependencies.
 3. If compilation fails, the NIF is not loaded and all codecs are registered as unavailable.
 
-This fallback is transparent. The `ExCodecs.Native.nif_loaded?/0` function detects whether the NIF loaded successfully, and the application handles the unavailable case gracefully.
+This fallback is transparent. The `ExCodecs.Native` module detects whether the NIF loaded successfully, and the application handles the unavailable case gracefully.
 
 ## Codec Version Reporting
 
@@ -294,6 +294,6 @@ All of these are caught and returned as `{:error, %ExCodecs.Error{}}` tuples, ne
 - ExCodecs uses Rustler NIFs for all compression operations, providing 10-100x speedup over pure Elixir.
 - NIFs run on BEAM Dirty CPU schedulers, preventing them from blocking normal process scheduling.
 - Precompiled binaries are distributed for 7 target platforms, requiring no Rust toolchain for installation.
-- The `nif_loaded?/0` function and registry enable graceful degradation when the NIF is unavailable.
+- The registry enables graceful degradation when the NIF is unavailable.
 - NIF errors are caught and returned as structured `ExCodecs.Error` tuples, never as exceptions.
 - Release-mode compilation with LTO and `codegen-units = 1` ensures maximum performance.

@@ -1,5 +1,10 @@
 defmodule ExCodecs.Application do
-  @moduledoc false
+  @moduledoc """
+  OTP Application callback module for ExCodecs.
+
+  Starts the `ExCodecs.CodecRegistry` and registers all built-in codecs
+  during application startup.
+  """
 
   use Application
 
