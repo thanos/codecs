@@ -28,10 +28,13 @@ defmodule ExCodecs.Compression do
   @doc """
   Returns all available compression codecs.
 
+  Returns a list of `%ExCodecs.Codec{}` structs sorted by name.
+
   ## Examples
 
-      iex> ExCodecs.Compression.available_codecs()
-      [:bzip2, :blosc2, :lz4, :snappy, :zstd]
+      iex> codecs = ExCodecs.Compression.available_codecs()
+      iex> is_list(codecs) and length(codecs) >= 5
+      true
   """
   @spec available_codecs() :: [ExCodecs.Codec.t()]
   def available_codecs do

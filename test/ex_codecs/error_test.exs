@@ -1,6 +1,8 @@
 defmodule ExCodecs.ErrorTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Error
+
   alias ExCodecs.Error
 
   describe "new/2" do
@@ -53,12 +55,6 @@ defmodule ExCodecs.ErrorTest do
 
     test "returns error tuple with options" do
       assert {:error, %Error{codec: :zstd}} = Error.error(:compression_failed, codec: :zstd)
-    end
-  end
-
-  describe "from_nif/2" do
-    test "wraps NIF error with codec name" do
-      assert {:error, %Error{codec: :zstd}} = Error.from_nif({:error, :some_reason}, :zstd)
     end
   end
 

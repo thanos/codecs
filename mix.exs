@@ -41,8 +41,8 @@ defmodule ExCodecs.MixProject do
 
   defp deps do
     [
-      {:rustler, "~> 0.36", runtime: false},
       {:rustler_precompiled, "~> 0.8"},
+      {:rustler, "~> 0.36", only: [:dev, :test]},
       {:stream_data, "~> 1.1", only: [:test, :dev]},
       {:excoveralls, "~> 0.18", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
@@ -71,7 +71,7 @@ defmodule ExCodecs.MixProject do
 
   defp package do
     [
-      description: "A production-quality, extensible BEAM-native codec framework for Elixir",
+      description: "An extensible BEAM-native codec framework for Elixir",
       licenses: ["Apache-2.0"],
       links: %{
         "GitHub" => @source_url,
@@ -84,6 +84,7 @@ defmodule ExCodecs.MixProject do
         "native/ex_codecs_native/Cargo.toml",
         "native/ex_codecs_native/Cargo.lock",
         "priv",
+        "checksum-*.exs",
         "mix.exs",
         "README.md",
         "LICENSE"
@@ -108,7 +109,8 @@ defmodule ExCodecs.MixProject do
       "rust.lint": [
         "cmd cargo clippy --manifest-path native/ex_codecs_native/Cargo.toml -- -D warnings"
       ],
-      "rust.test": ["cmd cargo test --manifest-path native/ex_codecs_native/Cargo.toml"]
+      "rust.test": ["cmd cargo test --manifest-path native/ex_codecs_native/Cargo.toml"],
+      benchmarks: ["run bench/run.exs"]
     ]
   end
 end

@@ -1,6 +1,6 @@
 defmodule ExCodecs do
   @moduledoc """
-  A production-quality, extensible BEAM-native codec framework for Elixir.
+  An extensible BEAM-native codec framework for Elixir.
 
   ExCodecs provides a unified API for compression, decompression, hashing,
   checksums, binary encodings, and future content-addressing codecs.
@@ -16,7 +16,7 @@ defmodule ExCodecs do
       {:ok, compressed} = ExCodecs.encode(:blosc2, my_binary, cname: :zstd, clevel: 5, shuffle: :byte)
 
       # Discovery
-      ExCodecs.available_codecs()   #=> [:bzip2, :blosc2, :lz4, :snappy, :zstd]
+      ExCodecs.available_codecs()   #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
       ExCodecs.supports?(:zstd)     #=> true
       ExCodecs.codec_info(:zstd)    #=> {:ok, %ExCodecs.Codec{...}}
 
@@ -48,27 +48,24 @@ defmodule ExCodecs do
 
   ## Arguments
 
-    * `codec` - The codec atom (e.g., `:zstd`, `:lz4`)
-    * `data` - The binary data to encode
-    * `opts` - Codec-specific options (default: `[]`)
+   * `codec` - The codec atom (e.g., `:zstd`, `:lz4`)
+   * `data` - The binary data to encode
+   * `opts` - Codec-specific options (default: `[]`)
 
   ## Returns
 
-    * `{:ok, encoded_binary}` - Successfully encoded data
-    * `{:error, %ExCodecs.Error{}}` - Encoding failed
+   * `{:ok, encoded_binary}` - Successfully encoded data
+   * `{:error, %ExCodecs.Error{}}` - Encoding failed
 
   ## Examples
 
-      iex> {:ok, compressed} = ExCodecs.encode(:zstd, "hello world")
-      iex> is_binary(compressed)
-      true
+     iex> {:ok, compressed} = ExCodecs.encode(:zstd, "hello world")
+     iex> is_binary(compressed)
+     true
 
-      iex> {:ok, compressed} = ExCodecs.encode(:zstd, "hello world", level: 3)
-      iex> is_binary(compressed)
-      true
-
-      iex> ExCodecs.encode(:unknown_codec, "data")
-      {:error, %ExCodecs.Error{reason: :unsupported_codec}}
+     iex> {:ok, compressed} = ExCodecs.encode(:zstd, "hello world", level: 3)
+     iex> is_binary(compressed)
+     true
   """
   @spec encode(atom(), binary(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def encode(codec, data, opts \\ [])
@@ -140,8 +137,8 @@ defmodule ExCodecs do
 
   ## Examples
 
-      iex> ExCodecs.available_codecs()
-      [:bzip2, :blosc2, :lz4, :snappy, :zstd]
+      iex> :blosc2 in ExCodecs.available_codecs()
+      true
   """
   @spec available_codecs() :: [atom()]
   def available_codecs do
@@ -181,6 +178,7 @@ defmodule ExCodecs do
       iex> info.name
       :zstd
 
+      iex> {:ok, info} = ExCodecs.codec_info(:zstd)
       iex> info.category
       :compression
   """

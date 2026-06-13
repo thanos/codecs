@@ -34,6 +34,15 @@ defmodule ExCodecs.PropertyTest do
     end
   end
 
+  property "blosc2 round-trip preserves data (random)" do
+    check all(size <- integer(8..10_000)) do
+      data = :crypto.strong_rand_bytes(size)
+      {:ok, compressed} = ExCodecs.encode(:blosc2, data)
+      {:ok, decompressed} = ExCodecs.decode(:blosc2, compressed)
+      assert decompressed == data
+    end
+  end
+
   property "compression reduces size for repeated data" do
     check all(
             byte <- string(Enum.take(?a..?z, 1), min_length: 1, max_length: 1),
@@ -42,6 +51,69 @@ defmodule ExCodecs.PropertyTest do
       data = String.duplicate(byte, count)
       {:ok, compressed} = ExCodecs.encode(:zstd, data)
       assert byte_size(compressed) < byte_size(data)
+    end
+  end
+
+  property "zstd round-trip preserves zero-filled data" do
+    check all(size <- integer(1..100_000)) do
+      data = :binary.copy(<<0>>, size)
+      {:ok, compressed} = ExCodecs.encode(:zstd, data)
+      {:ok, decompressed} = ExCodecs.decode(:zstd, compressed)
+      assert decompressed == data
+    end
+  end
+
+  property "lz4 round-trip preserves zero-filled data" do
+    check all(size <- integer(1..100_000)) do
+      data = :binary.copy(<<0>>, size)
+      {:ok, compressed} = ExCodecs.encode(:lz4, data)
+      {:ok, decompressed} = ExCodecs.decode(:lz4, compressed)
+      assert decompressed == data
+    end
+  end
+
+  property "blosc2 round-trip preserves zero-filled data" do
+    check all(size <- integer(1..50_000)) do
+      data = :binary.copy(<<0>>, size)
+      {:ok, compressed} = ExCodecs.encode(:blosc2, data, shuffle: :none, typesize: 1)
+      {:ok, decompressed} = ExCodecs.decode(:blosc2, compressed)
+      assert decompressed == data
+    end
+  end
+
+  property "bzip2 round-trip preserves zero-filled data" do
+    check all(size <- integer(1..100_000)) do
+      data = :binary.copy(<<0>>, size)
+      {:ok, compressed} = ExCodecs.encode(:bzip2, data)
+      {:ok, decompressed} = ExCodecs.decode(:bzip2, compressed)
+      assert decompressed == data
+    end
+  end
+
+  property "snappy round-trip preserves zero-filled data" do
+    check all(size <- integer(1..100_000)) do
+      data = :binary.copy(<<0>>, size)
+      {:ok, compressed} = ExCodecs.encode(:snappy, data)
+      {:ok, decompressed} = ExCodecs.decode(:snappy, compressed)
+      assert decompressed == data
+    end
+  end
+
+  property "zstd round-trip preserves repeated-string data" do
+    check all(size <- integer(1..50_000)) do
+      data = String.duplicate("ab", div(size, 2) + 1)
+      {:ok, compressed} = ExCodecs.encode(:zstd, data)
+      {:ok, decompressed} = ExCodecs.decode(:zstd, compressed)
+      assert decompressed == data
+    end
+  end
+
+  property "lz4 round-trip preserves repeated-string data" do
+    check all(size <- integer(1..50_000)) do
+      data = String.duplicate("ab", div(size, 2) + 1)
+      {:ok, compressed} = ExCodecs.encode(:lz4, data)
+      {:ok, decompressed} = ExCodecs.decode(:lz4, compressed)
+      assert decompressed == data
     end
   end
 

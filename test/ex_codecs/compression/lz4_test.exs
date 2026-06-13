@@ -10,10 +10,25 @@ defmodule ExCodecs.Compression.Lz4Test do
       assert is_binary(compressed)
     end
 
-    test "compresses data with custom level" do
-      data = :crypto.strong_rand_bytes(1024)
-      assert {:ok, _c} = Lz4.encode(data, level: 1)
-      assert {:ok, _c} = Lz4.encode(data, level: 4)
+    test "compresses highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      assert {:ok, compressed} = Lz4.encode(data, [])
+      assert {:ok, decompressed} = Lz4.decode(compressed, [])
+      assert decompressed == data
+    end
+
+    test "compresses repeated string data" do
+      data = String.duplicate("ab", 500_000)
+      assert {:ok, compressed} = Lz4.encode(data, [])
+      assert {:ok, decompressed} = Lz4.decode(compressed, [])
+      assert decompressed == data
+    end
+
+    test "compresses random data" do
+      data = :crypto.strong_rand_bytes(4096)
+      assert {:ok, compressed} = Lz4.encode(data, [])
+      assert {:ok, decompressed} = Lz4.decode(compressed, [])
+      assert decompressed == data
     end
 
     test "handles empty data" do
@@ -22,21 +37,16 @@ defmodule ExCodecs.Compression.Lz4Test do
       assert decompressed == ""
     end
 
-    test "returns error for invalid level" do
-      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
-               Lz4.encode("data", level: 0)
-
-      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
-               Lz4.encode("data", level: 17)
+    test "handles single byte data" do
+      assert {:ok, compressed} = Lz4.encode(<<42>>, [])
+      assert {:ok, decompressed} = Lz4.decode(compressed, [])
+      assert decompressed == <<42>>
     end
   end
 
   describe "decode/2" do
-    test "round-trip preserves data" do
-      data = :crypto.strong_rand_bytes(4096)
-      {:ok, compressed} = Lz4.encode(data, [])
-      {:ok, decompressed} = Lz4.decode(compressed, [])
-      assert decompressed == data
+    test "returns error for corrupt data" do
+      assert {:error, _} = Lz4.decode(<<0, 1, 2, 3>>, [])
     end
   end
 
@@ -45,7 +55,9 @@ defmodule ExCodecs.Compression.Lz4Test do
       info = Lz4.__codec_info__()
       assert info.name == :lz4
       assert info.category == :compression
-      assert info.configurable? == true
+      assert info.configurable? == false
+      assert info.native? == true
+      assert info.streaming? == false
     end
   end
 end

@@ -10,7 +10,6 @@ defmodule ExCodecs.Compression.Bzip2 do
 
     * `:block_size` — Block size multiplier, 1-9 (default: 9). Higher values
       produce smaller output but use more memory.
-    * `:work_factor` — Work factor for pathological cases, 0-250 (default: 30).
 
   ## Performance Characteristics
 
@@ -34,7 +33,6 @@ defmodule ExCodecs.Compression.Bzip2 do
   @behaviour ExCodecs.Codec
 
   @default_block_size 9
-  @default_work_factor 30
 
   @doc """
   Returns codec metadata for the registry.
@@ -59,16 +57,13 @@ defmodule ExCodecs.Compression.Bzip2 do
   ## Options
 
     * `:block_size` — Block size 1-9 (default: 9)
-    * `:work_factor` — Work factor 0-250 (default: 30)
   """
   @impl true
   def encode(data, opts) when is_binary(data) and is_list(opts) do
     block_size = Keyword.get(opts, :block_size, @default_block_size)
-    work_factor = Keyword.get(opts, :work_factor, @default_work_factor)
 
-    with :ok <- validate_block_size(block_size),
-         :ok <- validate_work_factor(work_factor) do
-      ExCodecs.NIF.wrap(:bzip2, ExCodecs.Native.bzip2_compress(data, block_size, work_factor))
+    with :ok <- validate_block_size(block_size) do
+      ExCodecs.NIF.wrap(:bzip2, ExCodecs.Native.bzip2_compress(data, block_size))
     end
   end
 
@@ -87,14 +82,5 @@ defmodule ExCodecs.Compression.Bzip2 do
       {:error,
        ExCodecs.Error.new(:invalid_options,
          message: "Block size must be an integer between 1 and 9"
-       )}
-
-  defp validate_work_factor(wf) when is_integer(wf) and wf >= 0 and wf <= 250, do: :ok
-
-  defp validate_work_factor(_),
-    do:
-      {:error,
-       ExCodecs.Error.new(:invalid_options,
-         message: "Work factor must be an integer between 0 and 250"
        )}
 end

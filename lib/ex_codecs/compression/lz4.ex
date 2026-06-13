@@ -6,10 +6,8 @@ defmodule ExCodecs.Compression.Lz4 do
   It provides compression at over 1 GB/s per core and decompression
   at multi-GB/s speeds.
 
-  ## Options
-
-    * `:level` — Compression level, 1-16 (default: 1). Higher levels produce
-      smaller output but sacrifice speed.
+  LZ4 does not accept configuration options. It uses a fixed compression
+  strategy optimized for speed.
 
   ## Performance Characteristics
 
@@ -27,8 +25,6 @@ defmodule ExCodecs.Compression.Lz4 do
 
   @behaviour ExCodecs.Codec
 
-  @default_level 1
-
   @doc """
   Returns codec metadata for the registry.
   """
@@ -39,7 +35,7 @@ defmodule ExCodecs.Compression.Lz4 do
       module: __MODULE__,
       native?: true,
       streaming?: false,
-      configurable?: true,
+      configurable?: false,
       version: lz4_version()
     }
   end
@@ -49,31 +45,18 @@ defmodule ExCodecs.Compression.Lz4 do
   @doc """
   Encodes (compresses) data using LZ4.
 
-  ## Options
-
-    * `:level` — Compression level 1-16 (default: 1)
+  LZ4 does not accept configuration options.
   """
   @impl true
-  def encode(data, opts) when is_binary(data) and is_list(opts) do
-    level = Keyword.get(opts, :level, @default_level)
-
-    with :ok <- validate_level(level) do
-      ExCodecs.NIF.wrap(:lz4, ExCodecs.Native.lz4_compress(data, level))
-    end
+  def encode(data, _opts) when is_binary(data) do
+    ExCodecs.NIF.wrap(:lz4, ExCodecs.Native.lz4_compress(data))
   end
 
   @doc """
   Decodes (decompresses) LZ4-compressed data.
   """
   @impl true
-  def decode(data, opts) when is_binary(data) and is_list(opts) do
+  def decode(data, _opts) when is_binary(data) do
     ExCodecs.NIF.wrap(:lz4, ExCodecs.Native.lz4_decompress(data))
   end
-
-  defp validate_level(level) when is_integer(level) and level >= 1 and level <= 16, do: :ok
-
-  defp validate_level(_),
-    do:
-      {:error,
-       ExCodecs.Error.new(:invalid_options, message: "Level must be an integer between 1 and 16")}
 end

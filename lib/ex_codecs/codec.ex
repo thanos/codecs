@@ -8,36 +8,38 @@ defmodule ExCodecs.Codec do
 
   ## Implementing a Codec
 
-      defmodule ExCodecs.Compression.Zstd do
-        @behaviour ExCodecs.Codec
+       defmodule ExCodecs.Compression.Zstd do
+         @behaviour ExCodecs.Codec
 
-        @impl true
-        def encode(data, opts) do
-          level = Keyword.get(opts, :level, 3)
-          ExCodecs.Native.zstd_compress(data, level)
-        end
+         @impl true
+         def encode(data, opts) do
+           level = Keyword.get(opts, :level, 3)
+           with :ok <- validate_level(level) do
+             ExCodecs.NIF.wrap(:zstd, ExCodecs.Native.zstd_compress(data, level))
+           end
+         end
 
-        @impl true
-        def decode(data, opts) do
-          ExCodecs.Native.zstd_decompress(data)
-        end
-      end
+         @impl true
+         def decode(data, _opts) do
+           ExCodecs.NIF.wrap(:zstd, ExCodecs.Native.zstd_decompress(data))
+         end
+       end
 
   ## Codec Metadata
 
   Codec modules should also export a `__codec_info__/0` function
   that returns metadata about the codec for the registry:
 
-      def __codec_info__ do
-        %ExCodecs.Codec{
-          name: :zstd,
-          category: :compression,
-          native?: true,
-          streaming?: true,
-          configurable?: true,
-          version: "1.5.6"
-        }
-      end
+       def __codec_info__ do
+         %ExCodecs.Codec{
+           name: :zstd,
+           category: :compression,
+           native?: true,
+           streaming?: true,
+           configurable?: true,
+           version: "1.5.x"
+         }
+       end
   """
 
   @type encode_result :: {:ok, binary()} | {:error, ExCodecs.Error.t()}

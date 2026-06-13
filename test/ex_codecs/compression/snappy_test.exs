@@ -21,6 +21,13 @@ defmodule ExCodecs.Compression.SnappyTest do
       assert {:ok, compressed} = Snappy.encode(data, [])
       assert byte_size(compressed) < byte_size(data)
     end
+
+    test "round-trips highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      assert {:ok, compressed} = Snappy.encode(data, [])
+      assert {:ok, decompressed} = Snappy.decode(compressed, [])
+      assert decompressed == data
+    end
   end
 
   describe "decode/2" do
@@ -30,6 +37,10 @@ defmodule ExCodecs.Compression.SnappyTest do
       {:ok, decompressed} = Snappy.decode(compressed, [])
       assert decompressed == data
     end
+
+    test "returns error for corrupt data" do
+      assert {:error, _} = Snappy.decode(<<0, 1, 2, 3>>, [])
+    end
   end
 
   describe "__codec_info__/0" do
@@ -38,6 +49,8 @@ defmodule ExCodecs.Compression.SnappyTest do
       assert info.name == :snappy
       assert info.category == :compression
       assert info.configurable? == false
+      assert info.native? == true
+      assert info.streaming? == false
     end
   end
 end

@@ -19,6 +19,20 @@ defmodule ExCodecs.Compression.ZstdTest do
       end
     end
 
+    test "higher levels produce smaller or equal output" do
+      data = :crypto.strong_rand_bytes(10_000)
+      {:ok, c1} = Zstd.encode(data, level: 1)
+      {:ok, c19} = Zstd.encode(data, level: 19)
+      assert byte_size(c19) <= byte_size(c1)
+    end
+
+    test "level effectiveness: higher levels produce smaller or equal output for compressible data" do
+      data = String.duplicate("Hello, World! ", 10_000)
+      {:ok, c1} = Zstd.encode(data, level: 1)
+      {:ok, c9} = Zstd.encode(data, level: 9)
+      assert byte_size(c9) <= byte_size(c1)
+    end
+
     test "handles empty data" do
       assert {:ok, compressed} = Zstd.encode("", [])
       assert {:ok, ""} = Zstd.decode(compressed, [])
@@ -50,11 +64,11 @@ defmodule ExCodecs.Compression.ZstdTest do
       assert byte_size(compressed) < byte_size(data) / 10
     end
 
-    test "higher levels produce smaller output" do
-      data = :crypto.strong_rand_bytes(10_000)
-      {:ok, c1} = Zstd.encode(data, level: 1)
-      {:ok, c19} = Zstd.encode(data, level: 19)
-      assert byte_size(c19) <= byte_size(c1)
+    test "round-trips highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      assert {:ok, compressed} = Zstd.encode(data, [])
+      assert {:ok, decompressed} = Zstd.decode(compressed, [])
+      assert decompressed == data
     end
   end
 

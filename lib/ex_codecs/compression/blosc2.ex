@@ -4,24 +4,23 @@ defmodule ExCodecs.Compression.Blosc2 do
 
   Blosc2 is a high-performance meta-compressor designed for binary data,
   particularly numerical arrays. It can use other compressors (Zstd, LZ4, etc.)
-  internally while adding features like byte/bit shuffle, multi-threading,
-  and frame-based container formats.
+  internally while adding features like byte shuffle and frame-based
+  container formats.
 
   ## Options
 
     * `:cname` — Internal compressor: `:lz4`, `:lz4hc`, `:blosclz`,
       `:zstd`, `:snappy`, `:zlib` (default: `:lz4`)
-    * `:clevel` — Compression level 0-9 (default: 5). 0 means no compression.
-    * `:shuffle` — Shuffle filter: `:none`, `:byte`, `:bit` (default: `:byte`)
+    * `:clevel` — Compression level 0-9 (default: 5). 0 means no compression
+      (store raw data).
+    * `:shuffle` — Shuffle filter: `:none`, `:byte` (default: `:byte`).
+      Byte shuffle reorders data to improve compression ratios for typed data.
     * `:typesize` — Element size in bytes for shuffle (default: 8)
-    * `:blocksize` — Block size, 0 for automatic (default: 0)
-    * `:numthreads` — Number of threads, 1 for single-threaded (default: 1)
 
   ## Performance Characteristics
 
     * Optimized for numerical/array data
-    * Byte/bit shuffle dramatically improves compression ratios for typed data
-    * Multi-threaded compression and decompression
+    * Byte shuffle dramatically improves compression ratios for typed data
     * Excellent when used with appropriate typesize and shuffle settings
 
   ## Examples
@@ -31,7 +30,7 @@ defmodule ExCodecs.Compression.Blosc2 do
       iex> decompressed
       <<1, 2, 3, 4, 5, 6, 7, 8>>
 
-      iex> {:ok, compressed} = ExCodecs.encode(:blosc2, data, cname: :zstd, clevel: 5, shuffle: :byte)
+      iex> {:ok, compressed} = ExCodecs.encode(:blosc2, <<1, 2, 3, 4, 5, 6, 7, 8>>, cname: :zstd, clevel: 5, shuffle: :byte)
       iex> is_binary(compressed)
       true
 
@@ -46,11 +45,9 @@ defmodule ExCodecs.Compression.Blosc2 do
   @default_clevel 5
   @default_shuffle :byte
   @default_typesize 8
-  @default_blocksize 0
-  @default_numthreads 1
 
   @valid_cnames [:lz4, :lz4hc, :blosclz, :zstd, :snappy, :zlib]
-  @valid_shuffles [:none, :byte, :bit]
+  @valid_shuffles [:none, :byte]
 
   @doc """
   Returns codec metadata for the registry.
@@ -76,10 +73,8 @@ defmodule ExCodecs.Compression.Blosc2 do
 
     * `:cname` — Internal compressor atom (default: `:lz4`)
     * `:clevel` — Compression level 0-9 (default: 5)
-    * `:shuffle` — Shuffle filter: `:none`, `:byte`, `:bit` (default: `:byte`)
+    * `:shuffle` — Shuffle filter: `:none`, `:byte` (default: `:byte`)
     * `:typesize` — Element size in bytes (default: 8)
-    * `:blocksize` — Block size, 0 for auto (default: 0)
-    * `:numthreads` — Number of threads (default: 1)
   """
   @impl true
   def encode(data, opts) when is_binary(data) and is_list(opts) do
@@ -87,8 +82,6 @@ defmodule ExCodecs.Compression.Blosc2 do
     clevel = Keyword.get(opts, :clevel, @default_clevel)
     shuffle = Keyword.get(opts, :shuffle, @default_shuffle)
     typesize = Keyword.get(opts, :typesize, @default_typesize)
-    blocksize = Keyword.get(opts, :blocksize, @default_blocksize)
-    numthreads = Keyword.get(opts, :numthreads, @default_numthreads)
 
     with :ok <- validate_cname(cname),
          :ok <- validate_clevel(clevel),
@@ -101,9 +94,7 @@ defmodule ExCodecs.Compression.Blosc2 do
           cname_to_int(cname),
           clevel,
           shuffle_to_int(shuffle),
-          typesize,
-          blocksize,
-          numthreads
+          typesize
         )
       )
     end
@@ -160,5 +151,4 @@ defmodule ExCodecs.Compression.Blosc2 do
 
   defp shuffle_to_int(:none), do: 0
   defp shuffle_to_int(:byte), do: 1
-  defp shuffle_to_int(:bit), do: 2
 end

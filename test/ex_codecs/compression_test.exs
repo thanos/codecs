@@ -1,6 +1,8 @@
 defmodule ExCodecs.CompressionTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Compression
+
   describe "available_codecs/0" do
     test "returns compression codecs" do
       codecs = ExCodecs.Compression.available_codecs()

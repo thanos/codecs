@@ -18,6 +18,24 @@ defmodule ExCodecs.CodecRegistryTest do
       assert {:error, {:invalid_codec_module, NonexistentModule}} =
                CodecRegistry.register(:fake, NonexistentModule, :compression)
     end
+
+    test "returns error for module missing encode/2" do
+      defmodule NoEncode do
+        def decode(_data, _opts), do: {:ok, ""}
+      end
+
+      assert {:error, {:invalid_codec_module, NoEncode}} =
+               CodecRegistry.register(:no_encode, NoEncode, :compression)
+    end
+
+    test "returns error for module missing decode/2" do
+      defmodule NoDecode do
+        def encode(_data, _opts), do: {:ok, ""}
+      end
+
+      assert {:error, {:invalid_codec_module, NoDecode}} =
+               CodecRegistry.register(:no_decode, NoDecode, :compression)
+    end
   end
 
   describe "register_unavailable/2" do

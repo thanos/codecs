@@ -22,7 +22,7 @@ defmodule ExCodecs.Compression.CodecVersionTest do
       assert info.category == :compression
       assert info.module == Lz4
       assert info.native? == true
-      assert info.configurable? == true
+      assert info.configurable? == false
       assert is_binary(info.version)
     end
 
@@ -105,6 +105,13 @@ defmodule ExCodecs.Compression.CodecVersionTest do
                ExCodecs.encode(:blosc2, data, shuffle: :invalid)
     end
 
+    test "blosc2 rejects bit shuffle" do
+      data = :crypto.strong_rand_bytes(1024)
+
+      assert {:error, %Error{reason: :invalid_options}} =
+               ExCodecs.encode(:blosc2, data, shuffle: :bit)
+    end
+
     test "blosc2 validates typesize option" do
       data = :crypto.strong_rand_bytes(1024)
 
@@ -126,19 +133,6 @@ defmodule ExCodecs.Compression.CodecVersionTest do
 
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:bzip2, "data", block_size: 10)
-    end
-
-    test "bzip2 invalid work_factor returns error" do
-      assert {:error, %Error{reason: :invalid_options}} =
-               ExCodecs.encode(:bzip2, "data", work_factor: 251)
-    end
-
-    test "lz4 invalid level returns error" do
-      assert {:error, %Error{reason: :invalid_options}} =
-               ExCodecs.encode(:lz4, "data", level: 0)
-
-      assert {:error, %Error{reason: :invalid_options}} =
-               ExCodecs.encode(:lz4, "data", level: 17)
     end
   end
 

@@ -27,6 +27,18 @@ defmodule ExCodecs.Error do
 
   @doc """
   Creates a new error struct.
+
+      iex> error = ExCodecs.Error.new(:unsupported_codec)
+      iex> error.reason
+      :unsupported_codec
+      iex> error.message
+      "The specified codec is not supported"
+      iex> error.codec
+      nil
+
+      iex> error = ExCodecs.Error.new(:invalid_options, codec: :zstd)
+      iex> error.codec
+      :zstd
   """
   @spec new(error_reason(), keyword()) :: t()
   def new(reason, opts \\ []) do
@@ -40,24 +52,14 @@ defmodule ExCodecs.Error do
 
   @doc """
   Creates an `{:error, ExCodecs.Error.t()}` tuple.
+
+      iex> {:error, error} = ExCodecs.Error.error(:unsupported_codec)
+      iex> error.reason
+      :unsupported_codec
   """
   @spec error(error_reason(), keyword()) :: {:error, t()}
   def error(reason, opts \\ []) do
     {:error, new(reason, opts)}
-  end
-
-  @doc """
-  Wraps a raw error tuple into an `{:error, ExCodecs.Error.t()}`.
-  """
-  @spec from_nif({:error, term()}, atom()) :: {:error, t()}
-  def from_nif({:error, reason}, codec) when is_atom(codec) do
-    {:error,
-     %__MODULE__{
-       reason: nif_error_to_atom(reason),
-       message: "NIF error in codec #{codec}: #{inspect(reason)}",
-       codec: codec,
-       details: reason
-     }}
   end
 
   defp default_message(:unsupported_codec), do: "The specified codec is not supported"
@@ -69,14 +71,17 @@ defmodule ExCodecs.Error do
   defp default_message(:nif_not_loaded), do: "The native NIF library is not loaded"
   defp default_message(reason), do: "Error: #{reason}"
 
-  defp nif_error_to_atom(reason) when is_atom(reason), do: reason
-  defp nif_error_to_atom(_), do: :compression_failed
-
   @impl true
   def message(%__MODULE__{message: message}), do: message
 
   @doc """
   Checks if an error matches a specific reason.
+
+      iex> {:error, error} = ExCodecs.Error.error(:unsupported_codec)
+      iex> ExCodecs.Error.matches?({:error, error}, :unsupported_codec)
+      true
+      iex> ExCodecs.Error.matches?({:error, error}, :invalid_data)
+      false
   """
   @spec matches?({:error, t()}, error_reason()) :: boolean()
   def matches?({:error, %__MODULE__{reason: reason}}, reason), do: true

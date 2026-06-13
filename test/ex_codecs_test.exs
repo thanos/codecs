@@ -1,6 +1,8 @@
 defmodule ExCodecsTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs
+
   describe "encode/3 with :zstd" do
     test "compresses binary data" do
       data = String.duplicate("AAAA", 256)
@@ -81,6 +83,41 @@ defmodule ExCodecsTest do
       {:ok, decompressed} = ExCodecs.decode(:blosc2, compressed)
       assert decompressed == data
     end
+
+    test "lz4 round-trip with highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      {:ok, compressed} = ExCodecs.encode(:lz4, data)
+      {:ok, decompressed} = ExCodecs.decode(:lz4, compressed)
+      assert decompressed == data
+    end
+
+    test "zstd round-trip with highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      {:ok, compressed} = ExCodecs.encode(:zstd, data)
+      {:ok, decompressed} = ExCodecs.decode(:zstd, compressed)
+      assert decompressed == data
+    end
+
+    test "blosc2 round-trip with highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      {:ok, compressed} = ExCodecs.encode(:blosc2, data, shuffle: :none, typesize: 1)
+      {:ok, decompressed} = ExCodecs.decode(:blosc2, compressed)
+      assert decompressed == data
+    end
+
+    test "bzip2 round-trip with highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      {:ok, compressed} = ExCodecs.encode(:bzip2, data)
+      {:ok, decompressed} = ExCodecs.decode(:bzip2, compressed)
+      assert decompressed == data
+    end
+
+    test "snappy round-trip with highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      {:ok, compressed} = ExCodecs.encode(:snappy, data)
+      {:ok, decompressed} = ExCodecs.decode(:snappy, compressed)
+      assert decompressed == data
+    end
   end
 
   describe "error handling" do
@@ -149,6 +186,22 @@ defmodule ExCodecsTest do
 
     test "returns error for unknown codec" do
       assert {:error, :unsupported_codec} = ExCodecs.codec_info(:nonexistent)
+    end
+  end
+
+  describe "codec_unavailable path" do
+    test "encode with unavailable codec returns codec_unavailable error" do
+      :ok = ExCodecs.CodecRegistry.register_unavailable(:future_codec, :compression)
+
+      assert {:error, %ExCodecs.Error{reason: :codec_unavailable}} =
+               ExCodecs.encode(:future_codec, "data")
+    end
+
+    test "decode with unavailable codec returns codec_unavailable error" do
+      :ok = ExCodecs.CodecRegistry.register_unavailable(:future_codec2, :compression)
+
+      assert {:error, %ExCodecs.Error{reason: :codec_unavailable}} =
+               ExCodecs.decode(:future_codec2, <<1, 2, 3>>)
     end
   end
 

@@ -18,6 +18,15 @@ defmodule ExCodecs.Compression.Bzip2Test do
       end
     end
 
+    test "block_size affects compression output" do
+      data = String.duplicate("Hello, World! ", 10_000)
+      {:ok, c1} = Bzip2.encode(data, block_size: 1)
+      {:ok, c9} = Bzip2.encode(data, block_size: 9)
+      assert is_binary(c1)
+      assert is_binary(c9)
+      assert byte_size(c9) <= byte_size(c1)
+    end
+
     test "handles empty data" do
       assert {:ok, compressed} = Bzip2.encode("", [])
       assert {:ok, decompressed} = Bzip2.decode(compressed, [])
@@ -32,9 +41,11 @@ defmodule ExCodecs.Compression.Bzip2Test do
                Bzip2.encode("data", block_size: 10)
     end
 
-    test "returns error for invalid work factor" do
-      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
-               Bzip2.encode("data", work_factor: 251)
+    test "round-trips highly compressible data" do
+      data = :binary.copy(<<0>>, 1_000_000)
+      assert {:ok, compressed} = Bzip2.encode(data, [])
+      assert {:ok, decompressed} = Bzip2.decode(compressed, [])
+      assert decompressed == data
     end
   end
 
@@ -45,6 +56,10 @@ defmodule ExCodecs.Compression.Bzip2Test do
       {:ok, decompressed} = Bzip2.decode(compressed, [])
       assert decompressed == data
     end
+
+    test "returns error for corrupt data" do
+      assert {:error, _} = Bzip2.decode(<<0, 1, 2, 3>>, [])
+    end
   end
 
   describe "__codec_info__/0" do
@@ -53,6 +68,8 @@ defmodule ExCodecs.Compression.Bzip2Test do
       assert info.name == :bzip2
       assert info.category == :compression
       assert info.configurable? == true
+      assert info.native? == true
+      assert info.streaming? == false
     end
   end
 end

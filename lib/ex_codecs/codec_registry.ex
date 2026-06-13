@@ -9,13 +9,14 @@ defmodule ExCodecs.CodecRegistry do
   ## Registry Operations
 
       iex> ExCodecs.available_codecs()
-      [:zstd, :lz4, :snappy, :bzip2, :blosc2]
+      [:blosc2, :bzip2, :lz4, :snappy, :zstd]
 
       iex> ExCodecs.supports?(:zstd)
       true
 
-      iex> ExCodecs.codec_info(:zstd)
-      %ExCodecs.Codec{name: :zstd, category: :compression, ...}
+      iex> {:ok, info} = ExCodecs.codec_info(:zstd)
+      iex> info.name
+      :zstd
 
   The registry is backed by an ETS table for fast lookups and is
   populated when the application starts.

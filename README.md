@@ -1,10 +1,10 @@
 # ExCodecs
 
-A production-quality, extensible BEAM-native codec framework for Elixir.
+An extensible BEAM-native codec framework for Elixir.
 
 ExCodecs provides a unified API for compression, decompression, hashing, checksums,
-binary encodings, and future content-addressing codecs -- all backed by Rust NIFs
-for maximum throughput on the BEAM.
+binary encodings, and future content-addressing codecs — all backed by Rust NIFs
+for high throughput on the BEAM.
 
 ## Design Philosophy
 
@@ -32,16 +32,18 @@ def deps do
 end
 ```
 
-Then fetch dependencies:
+Then fetch dependencies and compile:
 
 ```sh
-mix deps.get
+mix deps.get && mix compile
 ```
 
-Precompiled NIFs are available for macOS (Intel and ARM), Linux (x86_64 and
-ARM64, glibc and musl), and Windows (x86_64). If a precompiled artifact is not
-available for your target, ExCodecs falls back to compiling the Rust NIF from
-source (requires the Rust toolchain).
+Precompiled NIF binaries are available for macOS (Intel and ARM64), Linux
+(x86_64 and ARM64, glibc and musl), and Windows (x86_64). They are downloaded
+automatically from the [GitHub releases](https://github.com/ex-codecs/ex_codecs/releases)
+when you run `mix deps.get`. If a precompiled artifact is not available for your
+target, ExCodecs falls back to compiling the Rust NIF from source (requires
+Rust 1.85+).
 
 ## Quick Start
 
@@ -111,7 +113,7 @@ info.category       #=> :compression
 info.native?        #=> true
 info.streaming?     #=> true
 info.configurable?  #=> true
-info.version        #=> "1.5.6"
+info.version        #=> approximate (e.g., "1.5.x")
 ```
 
 Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
@@ -122,10 +124,10 @@ Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
 | Codec     | Category    | Configurable | Streaming | Options                                        |
 |-----------|-------------|--------------|-----------|------------------------------------------------|
 | `:zstd`   | compression | Yes           | Yes        | `level` (1-22, default 3)                     |
-| `:lz4`    | compression | Yes           | No         | `level` (1-16, default 1)                     |
+| `:lz4`    | compression | No            | No         | --                                              |
 | `:snappy` | compression | No            | No         | --                                              |
-| `:bzip2`  | compression | Yes           | No         | `block_size` (1-9, default 9), `work_factor` (0-250, default 30) |
-| `:blosc2` | compression | Yes           | Yes        | `cname`, `clevel` (0-9, default 5), `shuffle` (`:none` / `:byte` / `:bit`), `typesize` (default 8), `blocksize`, `numthreads` |
+| `:bzip2`  | compression | Yes           | No         | `block_size` (1-9, default 9)                 |
+| `:blosc2` | compression | Yes           | Yes        | `cname`, `clevel` (0-9, default 5), `shuffle` (`:none` / `:byte`, default `:byte`), `typesize` (default 8) |
 
 ## Architecture
 
@@ -151,8 +153,7 @@ ExCodecs is layered as follows:
    `compress`/`decompress`).
 
 To add a new codec: implement `ExCodecs.Codec`, add a native NIF function,
-register the codec in `config/config.exs` and `ExCodecs.Application`, and the
-rest follows automatically.
+register the codec in `ExCodecs.Application`, and the rest follows automatically.
 
 ## Error Handling
 
@@ -223,9 +224,9 @@ mix docs
 
 ### Requirements
 
-- Elixir 1.18+
-- Erlang/OTP 27+
-- Rust 1.77+ (only required if precompiled NIFs are unavailable for your platform)
+- Elixir 1.17+
+- Erlang/OTP 26+
+- Rust 1.85+ (only required if precompiled NIFs are unavailable for your platform)
 
 ## License
 
