@@ -16,11 +16,13 @@ defmodule ExCodecs.Native do
   > Rustler NIF stubs that are replaced at load time by the native implementation.
   """
 
+  version = Mix.Project.config()[:version]
+
   use RustlerPrecompiled,
     otp_app: :ex_codecs,
     crate: :ex_codecs_native,
-    version: "0.1.0",
-    base_url: "https://github.com/thanos/codecs/releases/download/v0.1.0",
+    version: version,
+    base_url: "https://github.com/thanos/codecs/releases/download/v#{version}",
     mode: :release,
     nif_versions: ["2.17"],
     targets: [

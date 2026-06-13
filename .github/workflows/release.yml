@@ -1,24 +1,35 @@
+# Precompiled NIFs for ExCodecs. Modeled on ExArrow / Explorer's release workflow.
+# https://github.com/elixir-explorer/explorer/blob/main/.github/workflows/release.yml
+# See: https://hexdocs.pm/rustler_precompiled/precompilation_guide.html
+# Enable: Settings → Actions → General → Workflow permissions → Read and write.
+
 name: Release
 
 on:
   push:
+    # Tag push  → full pipeline: build NIFs, create GitHub release, publish to Hex.pm.
+    # Branch push → build NIFs only (release/publish jobs are skipped; no tag ref).
     tags:
       - "v*"
+    branches:
+      - main
+    paths:
+      - "native/**"
+      - ".github/workflows/release.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
   id-token: write
   attestations: write
 
-env:
-  ELIXIR_VERSION: "1.19.5"
-  OTP_VERSION: "28.3.1"
-  NIF_VERSION: "2.17"
-
 jobs:
   build_nifs:
-    name: NIF ${{ matrix.target }} (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: NIF ${{ matrix.nif }} - ${{ matrix.job.target }} (${{ matrix.job.os }})
+    runs-on: ${{ matrix.job.os }}
 
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -26,57 +37,53 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-13
-            target: x86_64-apple-darwin
-          - os: macos-14
-            target: aarch64-apple-darwin
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-musl
-          - os: ubuntu-22.04
-            target: aarch64-unknown-linux-gnu
-          - os: ubuntu-22.04
-            target: aarch64-unknown-linux-musl
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
+        nif: ["2.17"]
+        job:
+          # macOS
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          # Linux: native and cross (cross from-source works on any runner arch)
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-22.04, use-cross: true }
+          # Windows
+          - { target: x86_64-pc-windows-msvc, os: windows-2022 }
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Extract project version
         shell: bash
         run: |
           echo "PROJECT_VERSION=$(sed -n 's/^  @version "\(.*\)"/\1/p' mix.exs | head -n1)" >> $GITHUB_ENV
 
-      - uses: erlef/setup-beam@v1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
+          targets: ${{ matrix.job.target }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Add target (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          rustup default stable
+          rustup target add ${{ matrix.job.target }}
+
+      - name: Use GNU tar on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install gnu-tar
+          echo "PATH=$(brew --prefix gnu-tar)/libexec/gnubin:$PATH" >> $GITHUB_ENV
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.9.1
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install cross-compilation dependencies (Linux GNU aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Install cross-compilation dependencies (Linux musl)
-        if: endsWith(matrix.target, '-unknown-linux-musl')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
-      - name: Install cross-compilation dependencies (Linux musl aarch64)
-        if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu musl-tools
-          sudo ln -s /usr/aarch64-linux-gnu/bin/ld /usr/bin/aarch64-linux-gnu-ld
+          prefix-key: ex-codecs-precomp
+          shared-key: ${{ matrix.job.target }}-${{ matrix.nif }}
+          workspaces: |
+            native/ex_codecs_native
 
       - name: Build NIF
         id: build
@@ -87,8 +94,10 @@ jobs:
           project-name: ex_codecs_native
           project-dir: native/ex_codecs_native
           project-version: ${{ env.PROJECT_VERSION }}
-          target: ${{ matrix.target }}
-          nif-version: ${{ env.NIF_VERSION }}
+          target: ${{ matrix.job.target }}
+          nif-version: ${{ matrix.nif }}
+          use-cross: ${{ matrix.job.use-cross || '' }}
+          cross-version: ${{ matrix.job.cross-version || 'from-source' }}
 
       - name: Artifact attestation
         if: startsWith(github.ref, 'refs/tags/')
@@ -150,12 +159,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: erlef/setup-beam@v1
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
         with:
-          elixir-version: ${{ env.ELIXIR_VERSION }}
-          otp-version: ${{ env.OTP_VERSION }}
+          elixir-version: "1.19.5"
+          otp-version: "28.3.1"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Restore Mix dependencies cache
         uses: actions/cache@v4
@@ -177,9 +188,13 @@ jobs:
         run: mix deps.get
 
       - name: Compile NIF from source
+        # Build the NIF locally so RustlerPrecompiled does not attempt a download
+        # during the subsequent checksum generation step.
         run: mix compile
 
       - name: Generate checksum file from GitHub Release
+        # Downloads all precompiled tarballs that were just attached to the
+        # GitHub release and writes checksum-Elixir.ExCodecs.Native.exs.
         run: mix rustler_precompiled.download ExCodecs.Native --all --print 2>/dev/null
 
       - name: Publish to Hex
