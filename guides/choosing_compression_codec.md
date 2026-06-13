@@ -1,0 +1,200 @@
+# Choosing a Compression Codec
+
+This guide helps you select the right compression codec for your use case. It includes a comparison table, decision criteria, and worked examples.
+
+## Quick Comparison
+
+| Codec    | Compression Ratio | Compression Speed | Decompression Speed | Memory Usage | Configurable | Streaming | Best For                          |
+|----------|-------------------|-------------------|---------------------|--------------|--------------|-----------|-----------------------------------|
+| LZ4      | Low               | Very Fast         | Very Fast           | Very Low     | Level 1-16   | No        | Real-time, latency-sensitive      |
+| Snappy   | Low               | Very Fast         | Very Fast           | Very Low     | No           | No        | Short-lived data, RPC payloads    |
+| Zstd     | High              | Fast              | Very Fast            | Moderate     | Level 1-22   | Yes       | General purpose, storage, network |
+| Bzip2    | Very High         | Slow              | Slow                | Moderate     | Block 1-9    | No        | Archival, offline processing      |
+| Blosc2   | High*             | Fast              | Very Fast**          | Configurable | Extensive    | Yes       | Numerical arrays, typed data      |
+
+\* Blosc2 ratio depends heavily on the internal codec (`cname`) and shuffle settings. With byte shuffle on typed data, ratios can exceed Zstd.
+
+\** Blosc2 decompression is fast because it can skip the decompression of unused blocks.
+
+## Decision Framework
+
+Answer the following questions to narrow your choice:
+
+### 1. What is your data type?
+
+- **Text, JSON, logs, general-purpose binary** -- Zstd is the best default. Use level 3 for a balance of speed and ratio.
+- **Typed numerical arrays (floats, integers, matrices)** -- Blosc2 with appropriate `typesize` and `shuffle` settings.
+- **Short-lived messages, RPC payloads** -- Snappy or LZ4 for minimal latency.
+- **Archival storage** -- Bzip2 for maximum ratio, or Zstd at level 19-22 for high ratio with better decompression speed.
+
+### 2. How fast does compression need to be?
+
+- **Under 1 GB/s** -- LZ4 or Snappy.
+- **Under 500 MB/s** -- Zstd level 1-3, Blosc2 with LZ4 inner codec.
+- **No constraint** -- Zstd high levels (9-22) or Bzip2.
+
+### 3. How fast does decompression need to be?
+
+- **Multi-GB/s required** -- LZ4 or Snappy.
+- **Fast, under 1 GB/s** -- Zstd any level, Blosc2.
+- **No constraint** -- Any codec. Bzip2 decompression is typically 50-200 MB/s.
+
+### 4. How much memory can you spare?
+
+- **Very constrained (embedded, large concurrent load)** -- LZ4 or Snappy.
+- **Moderate** -- Zstd at levels 1-14.
+- **Available** -- Zstd at levels 15-22, Bzip2 at block sizes 7-9, Blosc2 multi-threaded.
+
+### 5. Is data read once or many times?
+
+- **Read many times** -- Invest in higher compression. The one-time compression cost amortizes over many decompressions. Zstd level 9-14 or Bzip2.
+- **Read once or rarely** -- Use fast compression. LZ4 or Snappy.
+- **Never decompressed (checksum only)** -- Consider whether you need compression at all.
+
+## Codec-Specific Selection Guides
+
+### When to Use LZ4
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:lz4, data)
+{:ok, compressed} = ExCodecs.encode(:lz4, data, level: 4)
+```
+
+- Low-latency message queues
+- Real-time data pipelines where throughput matters more than size
+- Temporary data that will be decompressed quickly
+- In-memory caches where the CPU cost of decompression must be negligible
+- When you need deterministic compression and decompression speeds
+
+### When to Use Snappy
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:snappy, data)
+```
+
+- RPC frameworks (Snappy is the default in many RPC systems)
+- Data that is already partially compressed or has low entropy
+- Situations where you want zero configuration
+- When every microsecond counts and compression ratio is secondary
+
+### When to Use Zstd
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:zstd, data, level: 3)
+```
+
+- General-purpose compression (Zstd is the best default choice)
+- Databases, file storage, and network transmission
+- Workloads where decompression speed matters (Zstd decompresses fast regardless of compression level)
+- When you need a configurable tradeoff (22 levels from fast to maximum ratio)
+- Dictionary compression for small, repetitive payloads
+
+### When to Use Bzip2
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:bzip2, data, block_size: 9)
+```
+
+- Archival storage where maximum ratio is the priority
+- Offline batch processing where compression time is not constrained
+- Data that will be stored for a long time and decompressed rarely
+- Interoperability with the `.bz2` ecosystem
+
+### When to Use Blosc2
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:blosc2, data, cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8)
+```
+
+- Numerical arrays (float64, int32, etc.)
+- Scientific data, time series, matrix storage
+- Situations where shuffle filters provide a significant ratio improvement
+- Multi-threaded compression/decompression of large buffers
+- When you need fine-grained control over the compression pipeline
+
+## Worked Examples
+
+### Example 1: API Response Cache
+
+A web application caches JSON responses. Data is compressed once, read many times.
+
+**Choice: Zstd at level 5-9**
+
+```elixir
+# Compression (one-time cost)
+{:ok, compressed} = ExCodecs.encode(:zstd, json_binary, level: 7)
+
+# Decompression (many reads)
+{:ok, original} = ExCodecs.decode(:zstd, compressed)
+```
+
+Rationale: Zstd decompresses quickly regardless of compression level, so invest more in compression to get better ratios for the cache.
+
+### Example 2: Real-Time Message Broker
+
+Messages arrive at high volume and must be forwarded with minimal latency.
+
+**Choice: LZ4 at level 1**
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:lz4, message, level: 1)
+```
+
+Rationale: Latency is the priority. LZ4 at level 1 provides compression at over 500 MB/s, adding negligible overhead to the pipeline.
+
+### Example 3: Scientific Data Archive
+
+A research pipeline archives float64 measurement arrays to cold storage.
+
+**Choice: Blosc2 with Zstd inner codec and byte shuffle**
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:blosc2, float_array_binary,
+  cname: :zstd,
+  clevel: 9,
+  shuffle: :byte,
+  typesize: 8,
+  numthreads: 4
+)
+```
+
+Rationale: The byte shuffle reorders bytes within each 8-byte float, grouping high-order bytes (often similar) together. Zstd then achieves ratio gains of 2-10x compared to compressing the raw array.
+
+### Example 4: Log File Archival
+
+Monthly log files are compressed and stored in object storage.
+
+**Choice: Zstd at level 15-19 or Bzip2 at block size 9**
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:zstd, log_data, level: 17)
+# or
+{:ok, compressed} = ExCodecs.encode(:bzip2, log_data, block_size: 9)
+```
+
+Rationale: Compression is a one-time batch operation. Maximum ratio reduces storage costs over months. Zstd at high levels offers better decompression speed than Bzip2 if you need occasional access.
+
+### Example 5: Short-Lived RPC Payload
+
+An internal service sends compressed protobuf messages over the network.
+
+**Choice: Snappy**
+
+```elixir
+{:ok, compressed} = ExCodecs.encode(:snappy, protobuf_binary)
+```
+
+Rationale: Protobuf already removes much redundancy. Snappy adds minimal overhead on both compression and decompression, and requires no configuration. The ratio improvement will be modest but the latency impact is negligible.
+
+## Summary Table by Use Case
+
+| Use Case                     | Recommended Codec | Configuration                       |
+|------------------------------|-------------------|-------------------------------------|
+| General-purpose default      | Zstd              | `level: 3`                          |
+| Real-time / low-latency      | LZ4               | `level: 1`                           |
+| Fastest with no config       | Snappy            | (none)                               |
+| Maximum ratio / archival     | Bzip2 or Zstd     | `block_size: 9` or `level: 19-22`   |
+| Numerical arrays             | Blosc2            | `cname: :zstd, shuffle: :byte`      |
+| Small repetitive payloads    | Zstd              | `level: 3` with dictionary          |
+| In-memory cache              | LZ4 or Snappy     | `level: 1` or (none)                |
+| Already slightly compressed | Snappy or LZ4    | Lowest level to avoid wasted CPU     |

@@ -1,5 +1,6 @@
 # The directory Mix will write compiled artifacts to.
 /_build/
+/prompts/
 
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
@@ -21,3 +22,13 @@ ex_codecs-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Rust artifacts
+/native/ex_codecs_native/target/
+/native/ex_codecs_native/Cargo.lock
+
+# Rustler precompiled cache
+/priv/native/
+
+# Benchmark results
+/bench/results/

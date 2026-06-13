@@ -1,0 +1,146 @@
+# Zarr-Style Workloads
+
+```elixir
+Mix.install([
+  {:ex_codecs, path: ".."}
+])
+```
+
+## Scientific Dataset Compression
+
+ExCodecs is designed to serve as the codec foundation for scientific computing
+libraries like ExZarr and ExArrow. This notebook demonstrates compression
+patterns optimized for numerical and scientific data.
+
+```elixir
+alias ExCodecs.Compression
+```
+
+## Array Data Layout
+
+Scientific datasets are typically stored as multi-dimensional arrays with
+strong regularity:
+
+- Numeric types (integers, floats) with fixed element sizes
+- Regular dimension strides
+- Column-oriented or row-oriented access patterns
+
+Blosc2 was specifically designed for this workload:
+
+```elixir
+# Generate a synthetic dataset (64-bit float array)
+n_elements = 100_000
+data = :binary.copy(<<3.14159265::float-64>>, n_elements)
+byte_size = byte_size(data)
+
+# Compare codecs on regular numeric data
+codecs = [:zstd, :lz4, :snappy, :bzip2, :blosc2]
+
+results =
+  for codec <- codecs do
+    {time, {:ok, compressed}} = :timer.tc(fn -> ExCodecs.encode(codec, data) end)
+    ratio = Float.round(byte_size / byte_size(compressed), 2)
+    {codec, byte_size: byte_size(compressed), ratio: ratio, time_us: time}
+  end
+
+IO.puts("Codec    | Compressed | Ratio | Time (us)")
+IO.puts("---------|-----------|-------|----------")
+for {codec, opts} <- results do
+  IO.puts("#{String.pad_trailing("#{codec}", 8)} | #{String.pad_trailing("#{opts[:byte_size]}", 9)} | #{opts[:ratio]}   | #{opts[:time_us]}")
+end
+```
+
+## Blosc2 Shuffle for Numerical Data
+
+The shuffle filter is the key to Blosc2's effectiveness on array data:
+
+```elixir
+data = :binary.copy(<<1.0::float-64>>, 50_000) <> :binary.copy(<<2.0::float-64>>, 50_000)
+
+# No shuffle
+{:ok, c_none} = ExCodecs.encode(:blosc2, data, shuffle: :none)
+# Byte shuffle - reorders bytes for better compression
+{:ok, c_byte} = ExCodecs.encode(:blosc2, data, shuffle: :byte)
+# Bit shuffle - reorders bits for even better compression on some data
+{:ok, c_bit} = ExCodecs.encode(:blosc2, data, shuffle: :bit)
+
+IO.puts("No shuffle:   #{byte_size(c_none)} bytes")
+IO.puts("Byte shuffle: #{byte_size(c_byte)} bytes")
+IO.puts("Bit shuffle:  #{byte_size(c_bit)} bytes")
+```
+
+## Chunk-Based Compression
+
+Large datasets are typically split into chunks, each compressed independently:
+
+```elixir
+chunk_size = 1024 * 8  # 8 KiB chunks
+large_data = :crypto.strong_rand_bytes(1024 * 1024)  # 1 MiB
+
+chunks =
+  large_data
+  |> binary_part(0, byte_size(large_data))
+  |> then(fn data ->
+    for <<chunk::binary-size(chunk_size) <- data>>, do: chunk
+  end)
+
+compressed_chunks =
+  chunks
+  |> Enum.map(fn chunk ->
+    {:ok, compressed} = ExCodecs.encode(:zstd, chunk, level: 3)
+    compressed
+  end)
+
+total_original = byte_size(large_data)
+total_compressed = compressed_chunks |> Enum.map(&byte_size/1) |> Enum.sum()
+
+IO.puts("Original:   #{total_original} bytes")
+IO.puts("Compressed: #{total_compressed} bytes")
+IO.puts("Ratio:      #{Float.round(total_original / total_compressed, 2)}x")
+```
+
+## Decompressing Individual Chunks
+
+Only the needed chunks need to be decompressed:
+
+```elixir
+# Decompress just chunk 42
+target = Enum.at(compressed_chunks, 42)
+{:ok, decompressed} = ExCodecs.decode(:zstd, target)
+IO.puts("Decompressed chunk size: #{byte_size(decompressed)} bytes")
+IO.puts("Matches original: #{decompressed == Enum.at(chunks, 42)}")
+```
+
+## Choosing the Right Codec for Your Data
+
+```elixir
+data_patterns = %{
+  "Repetitive" => String.duplicate("AAAA", 100_000),
+  "Numeric array" => :binary.copy(<<3.14159::float-64>>, 100_000),
+  "Mixed" => (:crypto.strong_rand_bytes(500) <> String.duplicate("X", 500)) |> String.duplicate(100),
+  "Random" => :crypto.strong_rand_bytes(100_000)
+}
+
+codecs = [:zstd, :lz4, :snappy, :bzip2, :blosc2]
+
+IO.puts(String.pad_trailing("Pattern", 15) <> " | " <> Enum.join(codecs, " | "))
+
+for {name, data} <- data_patterns do
+  ratios =
+    for codec <- codecs do
+      {:ok, c} = ExCodecs.encode(codec, data)
+      Float.round(byte_size(data) / byte_size(c), 2)
+    end
+
+  ratio_strs = Enum.map(ratios, &String.pad_trailing("#{&1}", 5))
+  IO.puts(String.pad_trailing(name, 15) <> " | " <> Enum.join(ratio_strs, " | "))
+end
+```
+
+## Key Takeaways
+
+1. **Blosc2 with byte shuffle** excels on regular numeric arrays
+2. **Zstd** is the best general-purpose codec
+3. **LZ4 and Snappy** are fastest for real-time compression
+4. **Bzip2** gives the best ratios for archival
+5. **Chunk-based compression** enables random access to large datasets

@@ -1,0 +1,208 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ELIXIR_VERSION: "1.18"
+  OTP_VERSION: "27"
+  RUST_VERSION: "1.77"
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: fmt-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            fmt-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix format --check-formatted
+
+  compile:
+    name: Compile
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: compile-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            compile-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix compile --warnings-as-errors
+
+  credo:
+    name: Credo
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: credo-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            credo-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix credo --strict
+
+  dialyzer:
+    name: Dialyzer
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+            priv/plts
+          key: dialyzer-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            dialyzer-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix compile
+      - run: mix dialyzer --plt
+
+  test:
+    name: Test (OTP ${{ matrix.otp }} / Elixir ${{ matrix.elixir }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - otp: "27"
+            elixir: "1.18"
+          - otp: "27"
+            elixir: "1.17"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: test-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            test-${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+      - run: mix deps.get
+      - run: mix compile
+      - run: mix test
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: coverage-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            coverage-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix compile
+      - run: mix coveralls
+        env:
+          MIX_ENV: test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: cover/
+
+  docs:
+    name: Build Docs
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ env.ELIXIR_VERSION }}
+          otp-version: ${{ env.OTP_VERSION }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: docs-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            docs-${{ runner.os }}-otp${{ env.OTP_VERSION }}-elixir${{ env.ELIXIR_VERSION }}-
+      - run: mix deps.get
+      - run: mix compile
+      - run: mix docs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ex_codecs-docs
+          path: doc/

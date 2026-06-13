@@ -1,0 +1,152 @@
+# Introduction to ExCodecs
+
+```elixir
+Mix.install([
+  {:ex_codecs, path: Path.join(__DIR__, "..")}
+])
+```
+
+## What is a Codec?
+
+A **codec** (coder-decoder) is an abstraction for transforming data between two representations. In ExCodecs, the two fundamental operations are:
+
+- **Encode** — transform data into a compact or structured form
+- **Decode** — recover the original data from the encoded form
+
+For compression codecs, encoding means compressing and decoding means decompressing. But the codec abstraction extends beyond compression — it can represent hashing, checksums, binary encodings, and content-addressing transforms, all through the same `encode`/`decode` interface.
+
+```elixir
+# The universal codec interface
+{:ok, encoded} = ExCodecs.encode(:some_codec, original_data)
+{:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
+
+# Round-trip property: decoded == original_data
+```
+
+## Why Codecs Matter
+
+Compression and encoding are fundamental to production systems:
+
+| Concern | How Codecs Help |
+|---|---|
+| **Storage cost** | Compressed data uses less disk space |
+| **Network bandwidth** | Smaller payloads mean faster transfers |
+| **Data integrity** | Decode failures detect corruption |
+| **Memory efficiency** | Compressed caches fit more in RAM |
+| **Scientific data** | Blosc2 shuffle+compress slashes array sizes |
+
+A codec framework gives you a **single consistent API** over multiple algorithms, so you can choose the right tool per workload without rewriting integration code.
+
+## ExCodecs Philosophy
+
+ExCodecs is a **codec framework**, not just a compression library:
+
+1. **Unified API** — `encode/3` and `decode/3` work identically across all codecs
+2. **Runtime discovery** — query available codecs, check support, get metadata
+3. **Extensible** — the `ExCodecs.Codec` behaviour lets you add new codec categories
+4. **NIF-native** — Rust-powered NIFs for production throughput
+5. **Consistent errors** — structured `%ExCodecs.Error{}` for all failure modes
+
+Let's see it in action.
+
+## Quick Start
+
+### Basic Compression and Decompression
+
+```elixir
+# Simple round-trip with Zstd
+original = "The quick brown fox jumps over the lazy dog"
+{:ok, compressed} = ExCodecs.encode(:zstd, original)
+{:ok, recovered} = ExCodecs.decode(:zstd, compressed)
+
+IO.puts("Original size:   #{byte_size(original)} bytes")
+IO.puts("Compressed size: #{byte_size(compressed)} bytes")
+IO.puts("Recovered:       #{recovered}")
+IO.puts("Round-trip OK:   #{recovered == original}")
+```
+
+### Codec Options
+
+Each codec supports its own options:
+
+```elixir
+# Zstd compression levels (1-22, higher = smaller but slower)
+{:ok, fast} = ExCodecs.encode(:zstd, original, level: 1)
+{:ok, small} = ExCodecs.encode(:zstd, original, level: 22)
+
+IO.puts("Level 1:  #{byte_size(fast)} bytes")
+IO.puts("Level 22: #{byte_size(small)} bytes")
+
+# Bzip2 block sizes (1-9, higher = smaller but more memory)
+{:ok, bz_small} = ExCodecs.encode(:bzip2, original, block_size: 1)
+{:ok, bz_max} = ExCodecs.encode(:bzip2, original, block_size: 9)
+
+IO.puts("Bzip2 block 1: #{byte_size(bz_small)} bytes")
+IO.puts("Bzip2 block 9: #{byte_size(bz_max)} bytes")
+```
+
+### Blosc2 for Numerical Data
+
+```elixir
+# Blosc2 shines with typed binary data
+data = :binary.copy(<<0, 0, 0, 0, 1, 1, 1, 1>>, 512)
+
+{:ok, plain} = ExCodecs.encode(:blosc2, data, shuffle: :none)
+{:ok, shuffled} = ExCodecs.encode(:blosc2, data, shuffle: :byte)
+
+IO.puts("Original:        #{byte_size(data)} bytes")
+IO.puts("Blosc2 (no shuffle): #{byte_size(plain)} bytes")
+IO.puts("Blosc2 (byte shuffle): #{byte_size(shuffled)} bytes")
+```
+
+## Available Codecs
+
+```elixir
+codecs = ExCodecs.available_codecs()
+IO.puts("Available codecs: #{inspect(codecs)}")
+```
+
+### Codec Details
+
+```elixir
+for codec <- codecs do
+  {:ok, info} = ExCodecs.codec_info(codec)
+  IO.puts(String.duplicate("-", 50))
+  IO.puts("Codec:         #{info.name}")
+  IO.puts("Category:      #{info.category}")
+  IO.puts("Native?:       #{info.native?}")
+  IO.puts("Streaming?:    #{info.streaming?}")
+  IO.puts("Configurable?: #{info.configurable?}")
+  IO.puts("Version:       #{info.version || "unknown"}")
+end
+```
+
+### Codec Feature Summary
+
+| Codec | Category | Configurable | Streaming | Best For |
+|---|---|---|---|---|
+| `:zstd` | compression | Yes (level 1–22) | Yes | General-purpose, high ratio |
+| `:lz4` | compression | Yes (level 1–16) | No | Real-time, low latency |
+| `:snappy` | compression | No | No | Short-lived data, low overhead |
+| `:bzip2` | compression | Yes (block_size 1–9) | No | Archival, maximum ratio |
+| `:blosc2` | compression | Yes (many options) | Yes | Numerical/array data |
+
+## Error Handling
+
+```elixir
+# Unsupported codec
+{:error, err} = ExCodecs.encode(:nonexistent, "data")
+IO.puts("Reason:  #{err.reason}")
+IO.puts("Message: #{err.message}")
+
+# Invalid data type
+{:error, err} = ExCodecs.encode(:zstd, 12345)
+IO.puts("Reason:  #{err.reason}")
+```
+
+## What's Next?
+
+- **[Compression Fundamentals](02_compression_fundamentals.livemd)** — theory, trade-offs, and interactive benchmarks
+- **[Codec Comparison](03_codec_comparison.livemd)** — side-by-side performance analysis
+- **[Building Storage Systems](04_building_storage_systems.livemd)** — practical patterns for production use
+- **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific dataset compression with Blosc2
