@@ -6,8 +6,8 @@ on:
       - "v*"
 
 env:
-  ELIXIR_VERSION: "1.18"
-  OTP_VERSION: "27"
+  ELIXIR_VERSION: "1.19.5"
+  OTP_VERSION: "28.3.1"
   RUST_VERSION: "1.85"
 
 jobs:

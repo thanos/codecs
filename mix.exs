@@ -8,7 +8,7 @@ defmodule ExCodecs.MixProject do
     [
       app: :ex_codecs,
       version: @version,
-      elixir: "~> 1.18",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       rustler_precompiled: rustler_precompiled(),
@@ -24,6 +24,7 @@ defmodule ExCodecs.MixProject do
       preferred_cli_env: [
         coveralls: :test,
         "coveralls.detail": :test,
+        "coveralls.github": :test,
         "coveralls.post": :test,
         "coveralls.html": :test,
         benchmarks: :bench
