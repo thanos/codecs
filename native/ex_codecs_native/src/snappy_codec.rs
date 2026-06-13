@@ -1,12 +1,7 @@
-use rustler::{Binary, Encoder, Env, OwnedBinary, Term};
+use rustler::{Binary, Encoder, Env, Term};
 
 use crate::atoms;
-
-fn encode_binary<'a>(env: Env<'a>, data: &[u8]) -> Term<'a> {
-    let mut owned = OwnedBinary::new(data.len()).expect("allocation failed");
-    owned.as_mut_slice().copy_from_slice(data);
-    Binary::from_owned(owned, env).encode(env)
-}
+use crate::util::encode_binary;
 
 pub fn version() -> String {
     "1.1.x".to_string()

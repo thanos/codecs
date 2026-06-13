@@ -1,20 +1,15 @@
-use rustler::{Binary, Encoder, Env, OwnedBinary, Term};
+use rustler::{Binary, Encoder, Env, Term};
 use std::io::{Read, Write};
 
 use crate::atoms;
-
-fn encode_binary<'a>(env: Env<'a>, data: &[u8]) -> Term<'a> {
-    let mut owned = OwnedBinary::new(data.len()).expect("allocation failed");
-    owned.as_mut_slice().copy_from_slice(data);
-    Binary::from_owned(owned, env).encode(env)
-}
+use crate::util::encode_binary;
 
 pub fn version() -> String {
     "0.4.x".to_string()
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-pub fn bzip2_compress<'a>(env: Env<'a>, data: Binary, block_size: u32, _work_factor: u32) -> Term<'a> {
+pub fn bzip2_compress<'a>(env: Env<'a>, data: Binary, block_size: u32) -> Term<'a> {
     let block_size = block_size.clamp(1, 9);
 
     let result: Result<Vec<u8>, std::io::Error> = (|| {

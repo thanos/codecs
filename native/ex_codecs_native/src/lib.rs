@@ -3,6 +3,7 @@ mod blosc2_codec;
 mod bzip2_codec;
 mod lz4_codec;
 mod snappy_codec;
+mod util;
 mod zstd_codec;
 
 rustler::init!("Elixir.ExCodecs.Native");
