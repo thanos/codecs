@@ -86,24 +86,28 @@ defmodule ExCodecs.Compression.CodecVersionTest do
 
     test "blosc2 validates cname option" do
       data = :crypto.strong_rand_bytes(1024)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:blosc2, data, cname: :invalid)
     end
 
     test "blosc2 validates clevel option" do
       data = :crypto.strong_rand_bytes(1024)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:blosc2, data, clevel: 10)
     end
 
     test "blosc2 validates shuffle option" do
       data = :crypto.strong_rand_bytes(1024)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:blosc2, data, shuffle: :invalid)
     end
 
     test "blosc2 validates typesize option" do
       data = :crypto.strong_rand_bytes(1024)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:blosc2, data, typesize: 0)
     end
@@ -111,6 +115,7 @@ defmodule ExCodecs.Compression.CodecVersionTest do
     test "zstd invalid level returns error" do
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:zstd, "data", level: 0)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:zstd, "data", level: 23)
     end
@@ -118,6 +123,7 @@ defmodule ExCodecs.Compression.CodecVersionTest do
     test "bzip2 invalid block_size returns error" do
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:bzip2, "data", block_size: 0)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:bzip2, "data", block_size: 10)
     end
@@ -130,6 +136,7 @@ defmodule ExCodecs.Compression.CodecVersionTest do
     test "lz4 invalid level returns error" do
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:lz4, "data", level: 0)
+
       assert {:error, %Error{reason: :invalid_options}} =
                ExCodecs.encode(:lz4, "data", level: 17)
     end

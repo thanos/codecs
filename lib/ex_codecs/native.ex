@@ -50,4 +50,5 @@ defmodule ExCodecs.Native do
   @doc false
   def nif_loaded?, do: not function_exported?(__MODULE__, :zstd_compress, 2)
 end
+
 # coveralls-ignore-stop
