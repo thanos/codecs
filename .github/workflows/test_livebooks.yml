@@ -1,0 +1,48 @@
+name: Test Livebooks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: test-livebooks-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_VERSION: "1.85"
+
+jobs:
+  test-livebooks:
+    name: Test Livebooks (Elixir 1.17.3 / OTP 26.2)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.17.3"
+          otp-version: "26.2"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Add livebook_test dependency
+        run: |
+          sed -i 's/{:benchee_html, "~> 1.0", only: :bench}/{:benchee_html, "~> 1.0", only: :bench},\n      {:livebook_test, "~> 0.1.0", only: [:dev, :test], runtime: false}/' mix.exs
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            _build
+            deps
+            native/ex_codecs_native/target
+          key: livebooks-${{ runner.os }}-otp26-elixir1.17-mix${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            livebooks-${{ runner.os }}-otp26-elixir1.17-
+      - run: mix deps.get
+      - run: mix deps.compile
+      - run: mix compile
+      - run: mix livebook.test --mode local --verbose
