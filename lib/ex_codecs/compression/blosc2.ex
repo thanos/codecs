@@ -13,14 +13,16 @@ defmodule ExCodecs.Compression.Blosc2 do
       `:zstd`, `:snappy`, `:zlib` (default: `:lz4`)
     * `:clevel` — Compression level 0-9 (default: 5). 0 means no compression
       (store raw data).
-    * `:shuffle` — Shuffle filter: `:none`, `:byte` (default: `:byte`).
+    * `:shuffle` — Shuffle filter: `:none`, `:byte`, `:bit` (default: `:byte`).
       Byte shuffle reorders data to improve compression ratios for typed data.
+      Bit shuffle transposes at the bit level for even better compression on numerical data.
     * `:typesize` — Element size in bytes for shuffle (default: 8)
 
   ## Performance Characteristics
 
     * Optimized for numerical/array data
     * Byte shuffle dramatically improves compression ratios for typed data
+    * Bit shuffle can further improve compression on numerical data with small deltas
     * Excellent when used with appropriate typesize and shuffle settings
 
   ## Examples
@@ -47,7 +49,7 @@ defmodule ExCodecs.Compression.Blosc2 do
   @default_typesize 8
 
   @valid_cnames [:lz4, :lz4hc, :blosclz, :zstd, :snappy, :zlib]
-  @valid_shuffles [:none, :byte]
+  @valid_shuffles [:none, :byte, :bit]
 
   @doc """
   Returns codec metadata for the registry.
@@ -73,7 +75,7 @@ defmodule ExCodecs.Compression.Blosc2 do
 
     * `:cname` — Internal compressor atom (default: `:lz4`)
     * `:clevel` — Compression level 0-9 (default: 5)
-    * `:shuffle` — Shuffle filter: `:none`, `:byte` (default: `:byte`)
+    * `:shuffle` — Shuffle filter: `:none`, `:byte`, `:bit` (default: `:byte`)
     * `:typesize` — Element size in bytes (default: 8)
   """
   @impl true
@@ -151,4 +153,5 @@ defmodule ExCodecs.Compression.Blosc2 do
 
   defp shuffle_to_int(:none), do: 0
   defp shuffle_to_int(:byte), do: 1
+  defp shuffle_to_int(:bit), do: 2
 end

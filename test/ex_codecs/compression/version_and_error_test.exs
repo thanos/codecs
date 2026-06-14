@@ -105,11 +105,10 @@ defmodule ExCodecs.Compression.CodecVersionTest do
                ExCodecs.encode(:blosc2, data, shuffle: :invalid)
     end
 
-    test "blosc2 rejects bit shuffle" do
-      data = :crypto.strong_rand_bytes(1024)
+    test "blosc2 accepts bit shuffle" do
+      floats = for i <- 1..2048, into: <<>>, do: <<i * 0.125::float-size(64)-little>>
 
-      assert {:error, %Error{reason: :invalid_options}} =
-               ExCodecs.encode(:blosc2, data, shuffle: :bit)
+      assert {:ok, _} = ExCodecs.encode(:blosc2, floats, shuffle: :bit)
     end
 
     test "blosc2 validates typesize option" do

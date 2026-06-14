@@ -23,7 +23,7 @@ defmodule ExCodecs.Compression.Blosc2Test do
     test "compresses data with different shuffle modes" do
       data = :crypto.strong_rand_bytes(4096)
 
-      for shuffle <- [:none, :byte] do
+      for shuffle <- [:none, :byte, :bit] do
         assert {:ok, compressed} =
                  Blosc2.encode(data, shuffle: shuffle)
 
@@ -49,10 +49,10 @@ defmodule ExCodecs.Compression.Blosc2Test do
       assert decompressed == data
     end
 
-    test "round-trips random data with typesize 4 and 8, both shuffle modes" do
+    test "round-trips random data with typesize 4 and 8, all shuffle modes" do
       data = :crypto.strong_rand_bytes(10_000)
 
-      for typesize <- [4, 8], shuffle <- [:none, :byte] do
+      for typesize <- [4, 8], shuffle <- [:none, :byte, :bit] do
         assert {:ok, compressed} =
                  Blosc2.encode(data, cname: :lz4, clevel: 5, shuffle: shuffle, typesize: typesize)
 
@@ -84,6 +84,13 @@ defmodule ExCodecs.Compression.Blosc2Test do
       assert decompressed == data
     end
 
+    test "round-trips sequential float64 data with bit shuffle" do
+      floats = for i <- 1..2048, into: <<>>, do: <<i * 0.125::float-size(64)-little>>
+      assert {:ok, compressed} = Blosc2.encode(floats, cname: :zstd, shuffle: :bit, typesize: 8)
+      assert {:ok, decompressed} = Blosc2.decode(compressed, [])
+      assert decompressed == floats
+    end
+
     test "clevel affects compression output size" do
       data = :crypto.strong_rand_bytes(10_000)
       {:ok, c1} = Blosc2.encode(data, cname: :zstd, clevel: 1, shuffle: :none)
@@ -91,12 +98,14 @@ defmodule ExCodecs.Compression.Blosc2Test do
       assert byte_size(c9) <= byte_size(c1)
     end
 
-    test "no shuffle vs byte shuffle both round-trip" do
+    test "no shuffle vs byte shuffle vs bit shuffle all round-trip" do
       data = :crypto.strong_rand_bytes(8192)
       {:ok, c_none} = Blosc2.encode(data, shuffle: :none, typesize: 1)
       {:ok, c_byte} = Blosc2.encode(data, shuffle: :byte, typesize: 4)
+      {:ok, c_bit} = Blosc2.encode(data, shuffle: :bit, typesize: 4)
       assert {:ok, ^data} = Blosc2.decode(c_none, [])
       assert {:ok, ^data} = Blosc2.decode(c_byte, [])
+      assert {:ok, ^data} = Blosc2.decode(c_bit, [])
     end
 
     test "validates cname option" do
@@ -114,9 +123,9 @@ defmodule ExCodecs.Compression.Blosc2Test do
                Blosc2.encode("data", shuffle: :invalid)
     end
 
-    test "rejects bit shuffle as unsupported" do
-      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
-               Blosc2.encode("data", shuffle: :bit)
+    test "accepts bit shuffle option" do
+      data = :crypto.strong_rand_bytes(1024)
+      assert {:ok, _} = Blosc2.encode(data, shuffle: :bit)
     end
 
     test "validates typesize option" do
