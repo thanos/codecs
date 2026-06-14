@@ -69,7 +69,6 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:y, "ratio_pct", type: :quantitative, title: "Compressed Size (%)", scale: [domain: [0, 110]])
 |> VegaLite.encode_field(:color, "codec", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
-|> Kino.VegaLite.new()
 ```
 
 ### Space Savings Chart
@@ -82,7 +81,6 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:y, "savings_pct", type: :quantitative, title: "Space Saved (%)")
 |> VegaLite.encode_field(:color, "codec", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
-|> Kino.VegaLite.new()
 ```
 
 ## Speed Benchmarks
@@ -128,7 +126,6 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:y, "encode_time_us", type: :quantitative, title: "Encode Time (µs)")
 |> VegaLite.encode_field(:color, "codec", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
-|> Kino.VegaLite.new()
 ```
 
 ### Decode Speed Chart
@@ -141,7 +138,6 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:y, "decode_time_us", type: :quantitative, title: "Decode Time (µs)")
 |> VegaLite.encode_field(:color, "codec", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
-|> Kino.VegaLite.new()
 ```
 
 ## Memory Usage

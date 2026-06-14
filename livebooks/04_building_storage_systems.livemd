@@ -3,6 +3,7 @@
 ```elixir
 Mix.install([
   {:ex_codecs, path: Path.join(__DIR__, "..")},
+  {:jason, "~> 1.4"},
   {:kino, "~> 0.14"}
 ])
 ```
@@ -128,13 +129,13 @@ end
 # Store various data types
 CompressedStore.put(:doc1, String.duplicate("Hello, World! ", 1000))
 CompressedStore.put(:doc2, :crypto.strong_rand_bytes(4096) |> Base.encode64())
-CompressedStore.put(:doc3, Jason.encode!(%{for i <- 1..100, do: %{id: i, value: :rand.uniform(1000)}}))
+CompressedStore.put(:doc3, Jason.encode!(for i <- 1..100, do: %{id: i, value: :rand.uniform(1000)}))
 
-# Note: building JSON manually since we don't require Jason
+# Alternatively, building JSON manually without Jason
 json_data = Enum.map_join(1..100, ",", fn i ->
   "{\"id\":#{i},\"value\":#{:rand.uniform(1000)}}"
 end)
-CompressedStore.put(:doc3, "[#{json_data}]")
+CompressedStore.put(:doc3_alt, "[#{json_data}]")
 
 # Retrieve and verify
 {:ok, doc1} = CompressedStore.get(:doc1)
@@ -223,8 +224,8 @@ end
 
 datasets = %{
   repetitive: String.duplicate("abcabcabc", 5000),
-  semi_random: for(_ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>),
-  floats: for(i <- 1..4096, into: <<>>, do: <<i * 0.1::float-size(64)-little>>)
+  semi_random: (for _ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>),
+  floats: (for i <- 1..4096, into: <<>>, do: <<i * 0.1::float-size(64)-little>>)
 }
 
 for {name, data} <- datasets do
