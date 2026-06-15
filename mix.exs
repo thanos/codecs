@@ -27,8 +27,7 @@ defmodule ExCodecs.MixProject do
         "coveralls.github": :test,
         "coveralls.post": :test,
         "coveralls.html": :test,
-        benchmarks: :bench,
-        "livebook.test": :livebook
+        benchmarks: :bench
       ]
     ]
   end
@@ -50,8 +49,7 @@ defmodule ExCodecs.MixProject do
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.36", only: :dev, runtime: false},
       {:benchee, "~> 1.3", only: :bench},
-      {:benchee_html, "~> 1.0", only: :bench},
-      {:livebook_test, "~> 0.1.0", only: :livebook, runtime: false}
+      {:benchee_html, "~> 1.0", only: :bench}
     ]
   end
 
