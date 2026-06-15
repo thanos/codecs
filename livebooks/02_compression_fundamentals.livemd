@@ -1,12 +1,16 @@
 # Compression Fundamentals
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: Path.join(__DIR__, "..")},
-  {:jason, "~> 1.4"},
-  {:kino, "~> 0.14"},
-  {:vega_lite, "~> 0.1"}
-])
+Mix.install(
+  [
+    {:ex_codecs, path: Path.join(__DIR__, "..")},
+    {:jason, "~> 1.4"},
+    {:kino, "~> 0.14"},
+    {:rustler, "~> 0.36"},
+    {:kino_vega_lite, "~> 0.1.13"}
+  ],
+  config: [rustler_precompiled: [force_build: [ex_codecs: true]]]
+)
 ```
 
 ## How Compression Works
@@ -168,9 +172,10 @@ IO.puts("Compressed data can actually GROW due to header overhead")
 ```
 
 Rules of thumb:
-- **Don't compress encrypted or already-compressed data** — you waste CPU for no gain
-- **Avoid compressing tiny payloads** — the codec header overhead may exceed savings
-- **Consider latency** — LZ4/Snappy for hot paths, Bzip2 only for cold storage
+
+* **Don't compress encrypted or already-compressed data** — you waste CPU for no gain
+* **Avoid compressing tiny payloads** — the codec header overhead may exceed savings
+* **Consider latency** — LZ4/Snappy for hot paths, Bzip2 only for cold storage
 
 ## Memory vs CPU Considerations
 

@@ -1,9 +1,16 @@
 # Zarr-Style Workloads
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: ".."}
-])
+Mix.install(
+  [
+    {:ex_codecs, path: Path.join(__DIR__, "..")},
+    {:jason, "~> 1.4"},
+    {:kino, "~> 0.14"},
+    {:rustler, "~> 0.36"},
+    {:kino_vega_lite, "~> 0.1.13"}
+  ],
+  config: [rustler_precompiled: [force_build: [ex_codecs: true]]]
+)
 ```
 
 ## Scientific Dataset Compression
@@ -21,9 +28,9 @@ alias ExCodecs.Compression
 Scientific datasets are typically stored as multi-dimensional arrays with
 strong regularity:
 
-- Numeric types (integers, floats) with fixed element sizes
-- Regular dimension strides
-- Column-oriented or row-oriented access patterns
+* Numeric types (integers, floats) with fixed element sizes
+* Regular dimension strides
+* Column-oriented or row-oriented access patterns
 
 Blosc2 was specifically designed for this workload:
 

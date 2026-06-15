@@ -1,11 +1,16 @@
 # Codec Comparison
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: Path.join(__DIR__, "..")},
-  {:kino, "~> 0.14"},
-  {:vega_lite, "~> 0.1"}
-])
+Mix.install(
+  [
+    {:ex_codecs, path: Path.join(__DIR__, "..")},
+    {:jason, "~> 1.4"},
+    {:kino, "~> 0.14"},
+    {:rustler, "~> 0.36"},
+    {:kino_vega_lite, "~> 0.1.13"}
+  ],
+  config: [rustler_precompiled: [force_build: [ex_codecs: true]]]
+)
 ```
 
 ## Setup: Test Datasets
@@ -197,21 +202,21 @@ end
 
 ```elixir
 use_case = Kino.Input.select("Your use case:", [
-  "Real-time / low latency" => :speed,
-  "General purpose" => :balanced,
-  "Maximum compression / archival" => :ratio,
-  "Numerical / scientific data" => :numeric,
-  "Small payloads / low overhead" => :tiny
+  speed: "Real-time / low latency",
+  balanced: "General purpose",
+  ratio: "Maximum compression / archival",
+  numeric: "Numerical / scientific data",
+  tiny: "Small payloads / low overhead"
 ])
 
 data_type = Kino.Input.select("Data type:", [
-  "Text / JSON" => :text,
-  "Binary blobs" => :binary,
-  "Typed arrays (floats, ints)" => :array,
-  "Mixed" => :mixed
+  text: "Text / JSON",
+  binary: "Binary blobs",
+  array: "Typed arrays (floats, ints)",
+  mixed: "Mixed"
 ])
 
-Kino.Layout.grid([use_case, data_type], columns: 2)
+Kino.render(Kino.Layout.grid([use_case, data_type], columns: 2))
 ```
 
 ```elixir
@@ -274,17 +279,17 @@ IO.puts(flowchart)
 
 ## Codec Feature Matrix
 
-| Feature | LZ4 | Snappy | Zstd | Bzip2 | Blosc2 |
-|---|---|---|---|---|---|
-| Speed | Very Fast | Very Fast | Fast | Slow | Medium |
-| Ratio | Low | Low | High | Very High | High (arrays) |
-| Configurable | Level 1–16 | No | Level 1–22 | Block 1–9 | Many options |
-| Streaming | No | No | Yes | No | Yes |
-| Best For | Hot paths | Short data | General | Archival | Arrays |
-| Shuffle | — | — | — | — | Byte/Bit |
-| Multi-thread | No | No | No | No | Yes |
+| Feature      | LZ4          | Snappy     | Zstd         | Bzip2       | Blosc2        |
+| ------------ | ------------ | ---------- | ------------ | ----------- | ------------- |
+| Speed        | Very Fast    | Very Fast  | Fast         | Slow        | Medium        |
+| Ratio        | Low          | Low        | High         | Very High   | High (arrays) |
+| Configurable | Level 1–16 | No         | Level 1–22 | Block 1–9 | Many options  |
+| Streaming    | No           | No         | Yes          | No          | Yes           |
+| Best For     | Hot paths    | Short data | General      | Archival    | Arrays        |
+| Shuffle      | —          | —        | —          | —         | Byte/Bit      |
+| Multi-thread | No           | No         | No           | No          | Yes           |
 
 ## Next Steps
 
-- **[Building Storage Systems](04_building_storage_systems.livemd)** — production patterns and error handling
-- **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific data with Blosc2
+* **[Building Storage Systems](04_building_storage_systems.livemd)** — production patterns and error handling
+* **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific data with Blosc2
