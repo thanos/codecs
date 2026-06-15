@@ -15,14 +15,14 @@ env:
 
 jobs:
   test-livebooks:
-    name: Test Livebooks (Elixir 1.17.3 / OTP 26.2)
+    name: Test Livebooks (Elixir 1.18.4 / OTP 26.2)
     runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
       - uses: erlef/setup-beam@v1
         with:
-          elixir-version: "1.17.3"
+          elixir-version: "1.18.4"
           otp-version: "26.2"
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -34,9 +34,9 @@ jobs:
             _build
             deps
             native/ex_codecs_native/target
-          key: livebooks-${{ runner.os }}-otp26-elixir1.17-mix${{ hashFiles('mix.lock') }}
+          key: livebooks-${{ runner.os }}-otp26-elixir1.18-mix${{ hashFiles('mix.lock') }}
           restore-keys: |
-            livebooks-${{ runner.os }}-otp26-elixir1.17-
+            livebooks-${{ runner.os }}-otp26-elixir1.18-
       - run: mix deps.get
         env:
           MIX_ENV: livebook
