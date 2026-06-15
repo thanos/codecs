@@ -28,11 +28,6 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
       - run: sudo apt-get update && sudo apt-get install -y build-essential
-
-      - name: Add livebook_test dependency
-        run: |
-          sed -i 's/{:benchee_html, "~> 1.0", only: :bench}/{:benchee_html, "~> 1.0", only: :bench},\n      {:livebook_test, "~> 0.1.0", only: [:dev, :test], runtime: false}/' mix.exs
-
       - uses: actions/cache@v4
         with:
           path: |
@@ -43,6 +38,14 @@ jobs:
           restore-keys: |
             livebooks-${{ runner.os }}-otp26-elixir1.17-
       - run: mix deps.get
+        env:
+          MIX_ENV: livebook
       - run: mix deps.compile
+        env:
+          MIX_ENV: livebook
       - run: mix compile
+        env:
+          MIX_ENV: livebook
       - run: mix livebook.test --mode local --verbose
+        env:
+          MIX_ENV: livebook
