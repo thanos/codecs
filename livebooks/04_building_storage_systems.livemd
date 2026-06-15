@@ -1,10 +1,26 @@
 # Building Storage Systems with ExCodecs
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: Path.join(__DIR__, "..")},
-  {:kino, "~> 0.14"}
-])
+local_path = Path.join(__DIR__, "../mix.exs")
+
+ex_codecs_dep =
+  if File.exists?(local_path) do
+    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
+  else
+    [{:ex_codecs, "~> 0.1"}]
+  end
+
+config =
+  if File.exists?(local_path) do
+    [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  else
+    []
+  end
+
+Mix.install(
+  ex_codecs_dep ++ [{:jason, "~> 1.4"}, {:kino, "~> 0.14"}, {:kino_vega_lite, "~> 0.1.13"}],
+  config: config
+)
 ```
 
 ## Practical Usage Patterns
@@ -12,13 +28,9 @@ Mix.install([
 ### The Basic Pattern
 
 ```elixir
-# Every compression operation in ExCodecs follows this pattern:
 data = "Important data to store"
 
-# Encode (compress)
 {:ok, compressed} = ExCodecs.encode(:zstd, data)
-
-# Decode (decompress) — always matches the codec used to encode
 {:ok, recovered} = ExCodecs.decode(:zstd, compressed)
 
 IO.puts("Round-trip OK: #{recovered == data}")
@@ -27,7 +39,6 @@ IO.puts("Round-trip OK: #{recovered == data}")
 ### Choosing a Codec at Runtime
 
 ```elixir
-# Let the workload decide
 defmodule StorageConfig do
   def codec_for_content_type("application/json"), do: :zstd
   def codec_for_content_type("application/octet-stream"), do: :lz4
@@ -47,11 +58,7 @@ IO.puts("Supported: #{ExCodecs.supports?(codec)}")
 defmodule CompressedStore do
   @moduledoc """
   A simple key-value store with transparent compression.
-
-  Stores values compressed and decompresses on read.
-  Codec and options are configurable per-store instance.
   """
-
   use Agent
 
   defstruct [:codec, :opts, :table]
@@ -62,11 +69,7 @@ defmodule CompressedStore do
     name = Keyword.get(opts, :name, __MODULE__)
 
     Agent.start_link(fn ->
-      %__MODULE__{
-        codec: codec,
-        opts: codec_opts,
-        table: %{}
-      }
+      %__MODULE__{codec: codec, opts: codec_opts, table: %{}}
     end, name: name)
   end
 
@@ -79,8 +82,7 @@ defmodule CompressedStore do
             original_size: byte_size(value),
             codec: state.codec
           }
-          {{:ok, byte_size(compressed)}, Map.put(state.table, key, entry)}
-
+          {{:ok, byte_size(compressed)}, %{state | table: Map.put(state.table, key, entry)}}
         {:error, err} ->
           {{:error, err}, state}
       end
@@ -101,7 +103,6 @@ defmodule CompressedStore do
       entries = Map.values(state.table)
       total_original = Enum.sum(Enum.map(entries, & &1.original_size))
       total_compressed = Enum.sum(Enum.map(entries, &byte_size(&1.compressed)))
-
       %{
         codec: state.codec,
         entry_count: length(entries),
@@ -110,11 +111,11 @@ defmodule CompressedStore do
         savings_pct: Float.round(100 * (1 - total_compressed / max(total_original, 1)), 1)
       }
     end)
-  end)
+  end
 
   def delete(store \\ __MODULE__, key) do
     Agent.get_and_update(store, fn state ->
-      {Map.get(state.table, key), Map.delete(state.table, key)}
+      {Map.get(state.table, key), %{state | table: Map.delete(state.table, key)}}
     end)
   end
 end
@@ -123,24 +124,15 @@ end
 ### Using the Compressed Store
 
 ```elixir
-{:ok, _pid} = CompressedStore.start_link(codec: :zstd, level: 3)
+ {:ok, _pid} = CompressedStore.start_link(codec: :zstd, level: 3)
 
-# Store various data types
 CompressedStore.put(:doc1, String.duplicate("Hello, World! ", 1000))
 CompressedStore.put(:doc2, :crypto.strong_rand_bytes(4096) |> Base.encode64())
-CompressedStore.put(:doc3, Jason.encode!(%{for i <- 1..100, do: %{id: i, value: :rand.uniform(1000)}}))
+CompressedStore.put(:doc3, Jason.encode!(for i <- 1..100, do: %{id: i, value: :rand.uniform(1000)}))
 
-# Note: building JSON manually since we don't require Jason
-json_data = Enum.map_join(1..100, ",", fn i ->
-  "{\"id\":#{i},\"value\":#{:rand.uniform(1000)}}"
-end)
-CompressedStore.put(:doc3, "[#{json_data}]")
-
-# Retrieve and verify
 {:ok, doc1} = CompressedStore.get(:doc1)
 IO.puts("Retrieved doc1 (#{byte_size(doc1)} bytes)")
 
-# Check storage efficiency
 info = CompressedStore.info()
 IO.puts("\nStorage Summary:")
 IO.puts("  Codec: #{inspect(info.codec)}")
@@ -156,11 +148,7 @@ IO.puts("  Savings: #{info.savings_pct}%")
 defmodule MultiCodecStore do
   @moduledoc """
   A store that selects the best codec per value.
-
-  Tries multiple codecs and picks the one with the best ratio.
-  Stores the chosen codec alongside the compressed data.
   """
-
   use Agent
 
   @codecs [:lz4, :snappy, :zstd, :bzip2]
@@ -175,7 +163,7 @@ defmodule MultiCodecStore do
       results = for codec <- @codecs do
         {:ok, enc} = ExCodecs.encode(codec, value)
         {codec, enc, byte_size(enc)}
-      end)
+      end
 
       {best_codec, best_enc, best_size} =
         Enum.min_by(results, fn {_, _, size} -> size end)
@@ -187,7 +175,7 @@ defmodule MultiCodecStore do
         compressed_size: best_size
       }
 
-      {:ok, entry_info} = {entry, Map.put(state, key, entry)}
+      {{:ok, entry}, Map.put(state, key, entry)}
     end)
   end
 
@@ -223,8 +211,8 @@ end
 
 datasets = %{
   repetitive: String.duplicate("abcabcabc", 5000),
-  semi_random: for(_ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>),
-  floats: for(i <- 1..4096, into: <<>>, do: <<i * 0.1::float-size(64)-little>>)
+  semi_random: (for _ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>),
+  floats: (for i <- 1..4096, into: <<>>, do: <<i * 0.1::float-size(64)-little>>)
 }
 
 for {name, data} <- datasets do
@@ -236,8 +224,7 @@ end
 
 IO.puts("\nCodec distribution:")
 for {codec, count, orig, comp} <- MultiCodecStore.stats() do
-  IO.puts("  #{inspect(codec)}: #{count} entries, " <>
-    "#{orig} -> #{comp} bytes")
+  IO.puts("  #{inspect(codec)}: #{count} entries, #{orig} -> #{comp} bytes")
 end
 ```
 
@@ -247,24 +234,17 @@ end
 defmodule ChunkedCompressor do
   @moduledoc """
   Compresses large data in chunks to limit memory usage.
-
-  Each chunk is compressed independently, enabling:
-  - Parallel compression
-  - Random access on decompression
-  - Memory-bounded processing
   """
-
-  @default_chunk_size 64 * 1024  # 64 KB
+  @default_chunk_size 64 * 1024
 
   def compress(data, codec \\ :zstd, opts \\ [], chunk_size \\ @default_chunk_size) do
-    chunks = chunk_binary(data, chunk_size)
+    chunks = for <<chunk::binary-size(chunk_size) <- data>>, do: chunk
 
     compressed_chunks = Enum.map(chunks, fn chunk ->
       {:ok, enc} = ExCodecs.encode(codec, chunk, opts)
       enc
     end)
 
-    # Header: number of chunks, then offsets
     offsets = compressed_chunks
       |> Enum.scan(0, fn chunk, acc -> acc + byte_size(chunk) end)
       |> Enum.drop(-1)
@@ -290,7 +270,7 @@ defmodule ChunkedCompressor do
     offsets_list = offsets_list ++ [byte_size(chunks_binary)]
 
     chunks = Enum.chunk_every(offsets_list, 2, 1, :discard)
-      |> Enum.map(fn {start_off, end_off} ->
+      |> Enum.map(fn [start_off, end_off] ->
         size = end_off - start_off
         <<_::binary-size(start_off), chunk::binary-size(size), _::binary>> = chunks_binary
         chunk
@@ -303,15 +283,10 @@ defmodule ChunkedCompressor do
 
     {:ok, IO.iodata_to_binary(decompressed)}
   end
-
-  defp chunk_binary(data, chunk_size) do
-    for <<chunk::binary-size(chunk_size) <- data>>, do: chunk
-  end
 end
 ```
 
 ```elixir
-# Demo: chunked compression
 large_data = String.duplicate("This is a chunk of data that repeats. ", 10000)
 
 {:ok, compressed} = ChunkedCompressor.compress(large_data, :zstd)
@@ -326,60 +301,57 @@ IO.puts("Round-trip: #{recovered == large_data}")
 ## Error Handling Best Practices
 
 ```elixir
-# Pattern 1: Always handle both success and error
-case ExCodecs.encode(:zstd, my_data) do
+case ExCodecs.encode(:zstd, "some data") do
   {:ok, compressed} ->
-    :ok = write_to_disk(compressed)
     {:ok, compressed}
 
   {:error, %ExCodecs.Error{reason: :unsupported_codec}} ->
-    # Codec not available — fall back or fail gracefully
     {:error, :codec_missing}
 
   {:error, %ExCodecs.Error{reason: :invalid_data} = err} ->
-    # Data is not binary — log and reject
     IO.puts("Invalid data: #{err.message}")
     {:error, :bad_input}
 
   {:error, %ExCodecs.Error{reason: :compression_failed} = err} ->
-    # Compression itself failed — possibly corrupted or too large
     IO.puts("Compression failed: #{err.message}")
     {:error, :compress_failed}
 end
 ```
 
 ```elixir
-# Pattern 2: Validate before compress
-def safe_compress(codec, data, opts \\ []) do
-  with {:ok, true} <- {:check_codec, ExCodecs.supports?(codec)},
-       {:ok, true} <- {:check_binary, is_binary(data)},
-       {:ok, compressed} <- ExCodecs.encode(codec, data, opts),
-       {:ok, ^data} <- ExCodecs.decode(codec, compressed) do
-    {:ok, compressed}
-  else
-    {:check_codec, false} -> {:error, :unsupported_codec}
-    {:check_binary, false} -> {:error, :not_binary}
-    {:error, err} -> {:error, err}
+defmodule SafeCompress do
+  def call(codec, data, opts \\ []) do
+    with {:check_codec, true} <- {:check_codec, ExCodecs.supports?(codec)},
+         {:check_binary, true} <- {:check_binary, is_binary(data)},
+         {:ok, compressed} <- ExCodecs.encode(codec, data, opts),
+         {:ok, ^data} <- ExCodecs.decode(codec, compressed) do
+      {:ok, compressed}
+    else
+      {:check_codec, false} -> {:error, :unsupported_codec}
+      {:check_binary, false} -> {:error, :not_binary}
+      {:error, err} -> {:error, err}
+    end
   end
 end
 
-{:ok, result} = safe_compress(:zstd, "verify round-trip")
+{:ok, result} = SafeCompress.call(:zstd, "verify round-trip")
 IO.puts("Safe compress OK: #{is_binary(result)}")
 ```
 
 ```elixir
-# Pattern 3: Fallback codec chain
-def compress_with_fallback(data, codecs \\ [:zstd, :lz4, :snappy]) do
-  codecs
-  |> Enum.reduce_while({:error, :no_codec_available}, fn codec, _acc ->
-    case ExCodecs.encode(codec, data) do
-      {:ok, compressed} -> {:halt, {:ok, {codec, compressed}}}
-      {:error, _} -> {:cont, {:error, :codec_failed}}
-    end
-  end)
+defmodule CompressWithFallback do
+  def call(data, codecs \\ [:zstd, :lz4, :snappy]) do
+    codecs
+    |> Enum.reduce_while({:error, :no_codec_available}, fn codec, _acc ->
+      case ExCodecs.encode(codec, data) do
+        {:ok, compressed} -> {:halt, {:ok, {codec, compressed}}}
+        {:error, _} -> {:cont, {:error, :codec_failed}}
+      end
+    end)
+  end
 end
 
-{:ok, {used_codec, compressed}} = compress_with_fallback("fallback test data")
+{:ok, {used_codec, compressed}} = CompressWithFallback.call("fallback test data")
 IO.puts("Used codec: #{inspect(used_codec)}")
 IO.puts("Compressed: #{byte_size(compressed)} bytes")
 ```
@@ -390,11 +362,7 @@ IO.puts("Compressed: #{byte_size(compressed)} bytes")
 defmodule CompressedETS do
   @moduledoc """
   ETS-backed storage with transparent compression.
-
-  Stores compressed values in ETS for fast in-memory access
-  with reduced memory footprint.
   """
-
   def new(name \\ :compressed_store) do
     :ets.new(name, [:set, :public, :named_table])
     name
@@ -419,7 +387,6 @@ defmodule CompressedETS do
     entries = :ets.tab2list(table)
     total_orig = Enum.sum(Enum.map(entries, fn {_, _, _, orig} -> orig end))
     total_comp = Enum.sum(Enum.map(entries, fn {_, comp, _, _} -> byte_size(comp) end))
-
     %{
       entries: length(entries),
       original_bytes: total_orig,
@@ -445,7 +412,6 @@ IO.puts("  Original: #{stats.original_bytes} bytes")
 IO.puts("  Compressed: #{stats.compressed_bytes} bytes")
 IO.puts("  Savings: #{stats.savings_pct}%")
 
-# Verify retrieval
 {:ok, val} = CompressedETS.lookup(table, "key_1")
 IO.puts("\nRetrieved #{byte_size(val)} bytes successfully")
 
@@ -458,23 +424,17 @@ IO.puts("\nRetrieved #{byte_size(val)} bytes successfully")
 defmodule CompressedFileIO do
   @moduledoc """
   File I/O with transparent compression.
-
-  Writes compressed data to disk with a codec header for
-  self-describing files.
   """
-
   @magic "EXCD"
 
   def write(path, data, codec \\ :zstd, opts \\ []) do
     {:ok, compressed} = ExCodecs.encode(codec, data, opts)
-
     header = <<
       @magic::binary,
       codec_atom_to_bin(codec)::binary,
       byte_size(data)::unsigned-big-64,
       byte_size(compressed)::unsigned-big-64
     >>
-
     File.write(path, header <> compressed)
   end
 
@@ -483,10 +443,8 @@ defmodule CompressedFileIO do
       {:ok, <<@magic::binary, codec_bin::binary-size(8), _orig_size::unsigned-big-64, _comp_size::unsigned-big-64, compressed::binary>>} ->
         codec = bin_to_codec_atom(codec_bin)
         ExCodecs.decode(codec, compressed)
-
       {:ok, _} ->
         {:error, :invalid_format}
-
       {:error, reason} ->
         {:error, reason}
     end
@@ -503,7 +461,6 @@ end
 ```
 
 ```elixir
-# Demo: write and read compressed file
 test_data = String.duplicate("Compressed file storage example. ", 2000)
 path = Path.join(System.tmp_dir!(), "ex_codecs_demo.dat")
 

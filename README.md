@@ -1,5 +1,13 @@
 # ExCodecs
 
+[![CI](https://github.com/thanos/codecs/actions/workflows/ci.yml/badge.svg)](https://github.com/thanos/codecs/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/ex_codecs.svg)](https://hex.pm/packages/ex_codecs)
+[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/ex_codecs.svg)](https://hex.pm/packages/ex_codecs)
+[![Documentation](https://img.shields.io/badge/docs-hex.pm-blue.svg)](https://hexdocs.pm/ex_codecs)
+[![License](https://img.shields.io/hexpm/l/ex_codecs.svg)](https://github.com/thanos/codecs/blob/main/LICENSE)
+[![Elixir](https://img.shields.io/badge/Elixir-%7E%3E%201.17-purple.svg)](https://elixir-lang.org)
+[![Coverage Status](https://coveralls.io/repos/github/thanos/codecs/badge.svg?branch=main)](https://coveralls.io/github/thanos/codecs?branch=main)
+
 An extensible BEAM-native codec framework for Elixir.
 
 ExCodecs provides a unified API for compression, decompression, hashing, checksums,
@@ -127,7 +135,7 @@ Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
 | `:lz4`    | compression | No            | No         | --                                              |
 | `:snappy` | compression | No            | No         | --                                              |
 | `:bzip2`  | compression | Yes           | No         | `block_size` (1-9, default 9)                 |
-| `:blosc2` | compression | Yes           | Yes        | `cname`, `clevel` (0-9, default 5), `shuffle` (`:none` / `:byte`, default `:byte`), `typesize` (default 8) |
+| `:blosc2` | compression | Yes           | Yes        | `cname`, `clevel` (0-9, default 5), `shuffle` (`:none` / `:byte` / `:bit`, default `:byte`), `typesize` (default 8) |
 
 ## Architecture
 

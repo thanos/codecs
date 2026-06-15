@@ -1,11 +1,26 @@
 # Compression Fundamentals
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: Path.join(__DIR__, "..")},
-  {:kino, "~> 0.14"},
-  {:vega_lite, "~> 0.1"}
-])
+local_path = Path.join(__DIR__, "../mix.exs")
+
+ex_codecs_dep =
+  if File.exists?(local_path) do
+    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
+  else
+    [{:ex_codecs, "~> 0.1"}]
+  end
+
+config =
+  if File.exists?(local_path) do
+    [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  else
+    []
+  end
+
+Mix.install(
+  ex_codecs_dep ++ [{:jason, "~> 1.4"}, {:kino, "~> 0.14"}, {:kino_vega_lite, "~> 0.1.13"}],
+  config: config
+)
 ```
 
 ## How Compression Works
@@ -103,19 +118,13 @@ IO.puts("Zstd (plain):    #{byte_size(zstd_plain)} bytes")
 
 ```elixir
 # Generate test datasets
-datasets = %{
-  "JSON" => Jason.encode!(%{for i <- 1..500, do: %{id: i, name: "item_#{i}", value: :rand.uniform(1000)}}),
-}
-
-# For this demo, build JSON-like text manually
-json_like = "[" <> Enum.join(for i <- 1..500 do
-  "{\"id\":#{i},\"name\":\"item_#{i}\",\"value\":#{:rand.uniform(1000)}}"
-end, ",") <> "]"
+json_like = Jason.encode!(for i <- 1..500, do: %{id: i, name: "item_#{i}", value: :rand.uniform(1000)})
 
 datasets = %{
   "Repetitive" => String.duplicate("abcdefghij", 5000),
   "Natural text" => String.duplicate("The quick brown fox jumps over the lazy dog. ", 300),
-  "Semi-random" => for _ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>
+  "Semi-random" => (for _ <- 1..10000, into: <<>>, do: <<:rand.uniform(255)>>),
+  "JSON-like" => json_like
 }
 
 results = for {label, data} <- datasets, codec <- [:lz4, :snappy, :zstd, :bzip2] do
@@ -146,7 +155,6 @@ VegaLite.new(width: 600, height: 400)
 |> VegaLite.encode_field(:y, "ratio", type: :quantitative, title: "Compressed size (%)")
 |> VegaLite.encode_field(:color, "dataset", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
-|> Kino.VegaLite.new()
 ```
 
 ### Speed Visualization
@@ -159,7 +167,6 @@ VegaLite.new(width: 600, height: 400)
 |> VegaLite.encode_field(:y, "encode_us", type: :quantitative, title: "Encode time (µs)")
 |> VegaLite.encode_field(:color, "dataset", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
-|> Kino.VegaLite.new()
 ```
 
 ## When Not to Compress
@@ -175,9 +182,10 @@ IO.puts("Compressed data can actually GROW due to header overhead")
 ```
 
 Rules of thumb:
-- **Don't compress encrypted or already-compressed data** — you waste CPU for no gain
-- **Avoid compressing tiny payloads** — the codec header overhead may exceed savings
-- **Consider latency** — LZ4/Snappy for hot paths, Bzip2 only for cold storage
+
+* **Don't compress encrypted or already-compressed data** — you waste CPU for no gain
+* **Avoid compressing tiny payloads** — the codec header overhead may exceed savings
+* **Consider latency** — LZ4/Snappy for hot paths, Bzip2 only for cold storage
 
 ## Memory vs CPU Considerations
 

@@ -20,6 +20,7 @@ const BLOSC_ZSTD: u8 = 5;
 
 const BLOSC_NOSHUFFLE: u8 = 0;
 const BLOSC_BYTESHUFFLE: u8 = 1;
+const BLOSC_BITSHUFFLE: u8 = 2;
 
 fn byte_shuffle(data: &[u8], typesize: usize) -> Vec<u8> {
     if typesize <= 1 || data.len() < typesize {
@@ -60,6 +61,87 @@ fn byte_unshuffle(data: &[u8], typesize: usize) -> Vec<u8> {
     let offset = n_elements * typesize;
     if offset < data.len() {
         result[offset..].copy_from_slice(&data[offset..]);
+    }
+
+    result
+}
+
+fn bit_shuffle(data: &[u8], typesize: usize) -> Vec<u8> {
+    if typesize == 0 || data.is_empty() {
+        return data.to_vec();
+    }
+
+    let n_elements = data.len() / typesize;
+    if n_elements == 0 {
+        return data.to_vec();
+    }
+
+    let n_full_blocks = n_elements / 8;
+    let block_bytes = n_full_blocks * 8 * typesize;
+    let mut result = vec![0u8; data.len()];
+    let mut out_pos = 0;
+
+    for block in 0..n_full_blocks {
+        let block_start = block * 8;
+        for byte_idx in 0..typesize {
+            for bit_idx in 0..8 {
+                let mut acc: u8 = 0;
+                for i in 0..8 {
+                    let src = data[(block_start + i) * typesize + byte_idx];
+                    if src & (1 << (7 - bit_idx)) != 0 {
+                        acc |= 1 << (7 - i);
+                    }
+                }
+                result[out_pos] = acc;
+                out_pos += 1;
+            }
+        }
+    }
+
+    if block_bytes < data.len() {
+        result[block_bytes..data.len()].copy_from_slice(&data[block_bytes..data.len()]);
+    }
+
+    result
+}
+
+fn bit_unshuffle(data: &[u8], typesize: usize) -> Vec<u8> {
+    if typesize == 0 || data.is_empty() {
+        return data.to_vec();
+    }
+
+    let n_elements = data.len() / typesize;
+    if n_elements == 0 {
+        return data.to_vec();
+    }
+
+    let n_full_blocks = n_elements / 8;
+    let block_bytes = n_full_blocks * 8 * typesize;
+    let mut result = vec![0u8; data.len()];
+    let mut in_pos = 0;
+
+    for block in 0..n_full_blocks {
+        let block_start = block * 8;
+        for byte_idx in 0..typesize {
+            let mut transposed = [0u8; 8];
+            for k in 0..8 {
+                transposed[k] = data[in_pos];
+                in_pos += 1;
+            }
+            for i in 0..8 {
+                let mut byte_val: u8 = 0;
+                for bit_idx in 0..8 {
+                    if transposed[bit_idx] & (1 << (7 - i)) != 0 {
+                        byte_val |= 1 << (7 - bit_idx);
+                    }
+                }
+                result[(block_start + i) * typesize + byte_idx] = byte_val;
+            }
+        }
+    }
+
+    if block_bytes < data.len() {
+        result[block_bytes..data.len()].copy_from_slice(&data[block_bytes..data.len()]);
     }
 
     result
@@ -110,7 +192,7 @@ pub fn blosc2_compress<'a>(
     let clevel = clevel.clamp(0, 9) as u8;
     let typesize = typesize.max(1);
     let cname = cname.clamp(0, 5) as u8;
-    let shuffle = shuffle.clamp(0, 1) as u8;
+    let shuffle = shuffle.clamp(0, 2) as u8;
 
     if data.len() > u32::MAX as usize {
         return (atoms::error(), atoms::invalid_data()).encode(env);
@@ -120,7 +202,7 @@ pub fn blosc2_compress<'a>(
         let mut header = vec![0u8; BLOSC_MIN_HEADER_LENGTH];
         header[0] = BLOSC2_MAGIC;
         header[1] = BLOSC2_VERSION;
-        header[2] = 0x01; // flags: stored raw (no decompression needed)
+        header[2] = 0x01;
         header[3] = 0;
         header[4..8].copy_from_slice(&0u32.to_le_bytes());
         header[8..12].copy_from_slice(&(BLOSC_MIN_HEADER_LENGTH as u32).to_le_bytes());
@@ -133,6 +215,7 @@ pub fn blosc2_compress<'a>(
 
     let shuffled = match shuffle {
         BLOSC_BYTESHUFFLE => byte_shuffle(data.as_slice(), typesize),
+        BLOSC_BITSHUFFLE => bit_shuffle(data.as_slice(), typesize),
         _ => data.as_slice().to_vec(),
     };
 
@@ -181,7 +264,7 @@ pub fn blosc2_compress<'a>(
     let mut output = vec![0u8; total_len];
     output[0] = BLOSC2_MAGIC;
     output[1] = BLOSC2_VERSION;
-    output[2] = 0x00; // flags: 0x00 = compressed, 0x01 = stored raw
+    output[2] = 0x00;
     output[3] = 0;
     output[4..8].copy_from_slice(&(data.len() as u32).to_le_bytes());
     output[8..12].copy_from_slice(&(total_len as u32).to_le_bytes());
@@ -232,6 +315,7 @@ pub fn blosc2_decompress<'a>(env: Env<'a>, data: Binary) -> Term<'a> {
 
     let result = match shuffle {
         BLOSC_BYTESHUFFLE => byte_unshuffle(&decompressed, typesize),
+        BLOSC_BITSHUFFLE => bit_unshuffle(&decompressed, typesize),
         _ => decompressed,
     };
 

@@ -1,39 +1,52 @@
 # Introduction to ExCodecs
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: Path.join(__DIR__, "..")}
-])
+local_path = Path.join(__DIR__, "../mix.exs")
+
+ex_codecs_dep =
+  if File.exists?(local_path) do
+    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
+  else
+    [{:ex_codecs, "~> 0.1"}]
+  end
+
+config =
+  if File.exists?(local_path) do
+    [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  else
+    []
+  end
+
+Mix.install(ex_codecs_dep, config: config)
 ```
 
 ## What is a Codec?
 
 A **codec** (coder-decoder) is an abstraction for transforming data between two representations. In ExCodecs, the two fundamental operations are:
 
-- **Encode** — transform data into a compact or structured form
-- **Decode** — recover the original data from the encoded form
+* **Encode** — transform data into a compact or structured form
+* **Decode** — recover the original data from the encoded form
 
 For compression codecs, encoding means compressing and decoding means decompressing. But the codec abstraction extends beyond compression — it can represent hashing, checksums, binary encodings, and content-addressing transforms, all through the same `encode`/`decode` interface.
 
 ```elixir
-# The universal codec interface
-{:ok, encoded} = ExCodecs.encode(:some_codec, original_data)
-{:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
-
-# Round-trip property: decoded == original_data
+# The universal codec interface:
+#   {:ok, encoded} = ExCodecs.encode(:some_codec, data)
+#   {:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
+#   decoded == data  # round-trip guarantee
 ```
 
 ## Why Codecs Matter
 
 Compression and encoding are fundamental to production systems:
 
-| Concern | How Codecs Help |
-|---|---|
-| **Storage cost** | Compressed data uses less disk space |
-| **Network bandwidth** | Smaller payloads mean faster transfers |
-| **Data integrity** | Decode failures detect corruption |
-| **Memory efficiency** | Compressed caches fit more in RAM |
-| **Scientific data** | Blosc2 shuffle+compress slashes array sizes |
+| Concern               | How Codecs Help                             |
+| --------------------- | ------------------------------------------- |
+| **Storage cost**      | Compressed data uses less disk space        |
+| **Network bandwidth** | Smaller payloads mean faster transfers      |
+| **Data integrity**    | Decode failures detect corruption           |
+| **Memory efficiency** | Compressed caches fit more in RAM           |
+| **Scientific data**   | Blosc2 shuffle+compress slashes array sizes |
 
 A codec framework gives you a **single consistent API** over multiple algorithms, so you can choose the right tool per workload without rewriting integration code.
 
@@ -123,13 +136,13 @@ end
 
 ### Codec Feature Summary
 
-| Codec | Category | Configurable | Streaming | Best For |
-|---|---|---|---|---|
-| `:zstd` | compression | Yes (level 1–22) | Yes | General-purpose, high ratio |
-| `:lz4` | compression | Yes (level 1–16) | No | Real-time, low latency |
-| `:snappy` | compression | No | No | Short-lived data, low overhead |
-| `:bzip2` | compression | Yes (block_size 1–9) | No | Archival, maximum ratio |
-| `:blosc2` | compression | Yes (many options) | Yes | Numerical/array data |
+| Codec     | Category    | Configurable           | Streaming | Best For                       |
+| --------- | ----------- | ---------------------- | --------- | ------------------------------ |
+| `:zstd`   | compression | Yes (level 1–22)     | Yes       | General-purpose, high ratio    |
+| `:lz4`    | compression | Yes (level 1–16)     | No        | Real-time, low latency         |
+| `:snappy` | compression | No                     | No        | Short-lived data, low overhead |
+| `:bzip2`  | compression | Yes (block_size 1–9) | No        | Archival, maximum ratio        |
+| `:blosc2` | compression | Yes (many options)     | Yes       | Numerical/array data           |
 
 ## Error Handling
 
@@ -146,7 +159,7 @@ IO.puts("Reason:  #{err.reason}")
 
 ## What's Next?
 
-- **[Compression Fundamentals](02_compression_fundamentals.livemd)** — theory, trade-offs, and interactive benchmarks
-- **[Codec Comparison](03_codec_comparison.livemd)** — side-by-side performance analysis
-- **[Building Storage Systems](04_building_storage_systems.livemd)** — practical patterns for production use
-- **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific dataset compression with Blosc2
+* **[Compression Fundamentals](02_compression_fundamentals.livemd)** — theory, trade-offs, and interactive benchmarks
+* **[Codec Comparison](03_codec_comparison.livemd)** — side-by-side performance analysis
+* **[Building Storage Systems](04_building_storage_systems.livemd)** — practical patterns for production use
+* **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific dataset compression with Blosc2
