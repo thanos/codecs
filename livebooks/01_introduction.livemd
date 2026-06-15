@@ -16,11 +16,10 @@ A **codec** (coder-decoder) is an abstraction for transforming data between two 
 For compression codecs, encoding means compressing and decoding means decompressing. But the codec abstraction extends beyond compression — it can represent hashing, checksums, binary encodings, and content-addressing transforms, all through the same `encode`/`decode` interface.
 
 ```elixir
-# The universal codec interface
-{:ok, encoded} = ExCodecs.encode(:some_codec, original_data)
-{:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
-
-# Round-trip property: decoded == original_data
+# The universal codec interface:
+#   {:ok, encoded} = ExCodecs.encode(:some_codec, data)
+#   {:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
+#   decoded == data  # round-trip guarantee
 ```
 
 ## Why Codecs Matter
