@@ -1,12 +1,23 @@
 # Introduction to ExCodecs
 
 ```elixir
-Mix.install([
-  {:ex_codecs, path: Path.join(__DIR__, "..")},
-  {:rustler, "~> 0.36"}
-],
-config: [rustler_precompiled: [force_build: [ex_codecs: true]]]
-)
+local_path = Path.join(__DIR__, "../mix.exs")
+
+ex_codecs_dep =
+  if File.exists?(local_path) do
+    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
+  else
+    [{:ex_codecs, "~> 0.1"}]
+  end
+
+config =
+  if File.exists?(local_path) do
+    [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  else
+    []
+  end
+
+Mix.install(ex_codecs_dep, config: config)
 ```
 
 ## What is a Codec?

@@ -1,15 +1,25 @@
 # Zarr-Style Workloads
 
 ```elixir
+local_path = Path.join(__DIR__, "../mix.exs")
+
+ex_codecs_dep =
+  if File.exists?(local_path) do
+    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
+  else
+    [{:ex_codecs, "~> 0.1"}]
+  end
+
+config =
+  if File.exists?(local_path) do
+    [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  else
+    []
+  end
+
 Mix.install(
-  [
-    {:ex_codecs, path: Path.join(__DIR__, "..")},
-    {:jason, "~> 1.4"},
-    {:kino, "~> 0.14"},
-    {:rustler, "~> 0.36"},
-    {:kino_vega_lite, "~> 0.1.13"}
-  ],
-  config: [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  ex_codecs_dep ++ [{:jason, "~> 1.4"}, {:kino, "~> 0.14"}, {:kino_vega_lite, "~> 0.1.13"}],
+  config: config
 )
 ```
 
