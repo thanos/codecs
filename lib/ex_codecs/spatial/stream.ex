@@ -6,7 +6,13 @@ defmodule ExCodecs.Spatial.Stream do
   (or full enumerable) then yield items. True incremental I/O for multi-GB
   files is not implemented yet.
 
-  Prefer `source: :file` when the argument is a filesystem path.
+  Prefer `source: :file` when the argument is a filesystem path, or
+  `source: :binary` when it is an encoded payload. With `:auto` (default), a
+  binary is treated as a path only when it looks path-like (under 4 KiB, no
+  `ply`/`EXCP`/`GSPL` magic prefix, and contains `/` or `\\` or ends with
+  `.ply`/`.excp`/`.gspl`/`.bin`) **and** `File.regular?/1` is true. A real
+  file without separators/extensions is not auto-opened; a short slash-containing
+  binary that happens to be a regular path may be misread as a file.
   """
 
   alias ExCodecs.Error

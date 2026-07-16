@@ -9,7 +9,7 @@ LZ4 was created by Yann Collet (the same author as Zstd) and is focused on extre
 - Compression speeds over 500 MB/s per core.
 - Decompression speeds over 2 GB/s per core.
 - A simple, well-defined block format.
-- Configurable compression levels (1-16) via LZ4 HC.
+- A fixed fast-compression profile in ExCodecs.
 
 LZ4 achieves this speed by using a simple hash table for match finding and avoiding computationally expensive entropy coding. The tradeoff is a lower compression ratio compared to Zstd or Bzip2.
 
@@ -36,29 +36,18 @@ Unlike Zstd or Deflate, LZ4 does **not** perform:
 
 This simplicity is what makes LZ4 fast. The compressed data is essentially a stream of "copy these literal bytes, then copy `length` bytes from `offset` back."
 
-## Compression Levels
+## Configuration
 
-With the `lz4_flex` Rust crate, LZ4 offers levels 1-16 through the HC (Higher Compression) variant:
-
-| Level | Speed            | Ratio    | Use Case                         |
-|-------|------------------|----------|----------------------------------|
-| 1     | Very Fast (500+ MB/s) | Moderate | Default, real-time systems      |
-| 4-8   | Fast (200-400 MB/s)   | Good     | Slightly more compression needed |
-| 9-12  | Moderate          | Better   | When ratio matters more than speed|
-| 13-16 | Slow              | Best     | Maximum LZ4 ratio                |
+The ExCodecs LZ4 codec uses `lz4_flex` fast block compression and does **not**
+expose compression levels or LZ4 HC. Pass no codec-specific encode options:
 
 ```elixir
-# Default (fastest)
 {:ok, compressed} = ExCodecs.encode(:lz4, data)
-
-# Higher level for better ratio
-{:ok, compressed} = ExCodecs.encode(:lz4, data, level: 9)
-
-# Maximum LZ4 compression (still faster than Zstd level 1)
-{:ok, compressed} = ExCodecs.encode(:lz4, data, level: 16)
 ```
 
-Even at level 16, LZ4 HC is typically faster than Zstd at level 1, though Zstd achieves better ratios at all levels.
+If you need a configurable speed/ratio tradeoff, use Zstd. If you need an
+LZ4-family codec with a higher-compression profile, Blosc2 supports
+`cname: :lz4hc` and `clevel: 0..9`.
 
 ## The LZ4 Block Format
 
@@ -95,7 +84,7 @@ This format is simple to parse, which contributes to LZ4's fast decompression sp
 
 ### Compression Speed
 
-LZ4 at level 1 compresses at 500+ MB/s on modern hardware. This means:
+LZ4's fixed fast profile can compress at 500+ MB/s on modern hardware. This means:
 
 - A 1 MB payload compresses in under 2 ms.
 - A 10 MB payload compresses in under 20 ms.
@@ -144,10 +133,10 @@ LZ4 and Snappy occupy a similar niche (fast, low-ratio compression). Key differe
 
 | Property          | LZ4                           | Snappy                        |
 |-------------------|-------------------------------|-------------------------------|
-| Compression Speed | ~500 MB/s (level 1)           | ~500 MB/s                    |
+| Compression Speed | ~500 MB/s (fixed fast profile)| ~500 MB/s                    |
 | Decompression Speed | ~2 GB/s                     | ~1.5 GB/s                    |
 | Compression Ratio | Moderate (better than Snappy)| Slightly lower               |
-| Configurable      | Yes (16 levels)              | No                            |
+| Configurable      | No                            | No                            |
 | Format            | LZ4 block format             | Snappy framework format       |
 | Deterministic     | Yes                          | Yes                           |
 
@@ -161,14 +150,15 @@ LZ4 generally offers better ratio at comparable speeds, while Snappy has a simpl
 | Decompression Speed| Faster          | Fast                  |
 | Ratio             | Moderate         | High                  |
 | Window Size       | 64 KB (fixed)   | Up to 8 MB+ (configurable) |
-| Dictionary       | No               | Yes                   |
-| Configurable      | 1-16             | 1-22                  |
+| Dictionary       | No               | Not exposed by ExCodecs |
+| Configurable      | No               | Levels 1-22            |
 
 LZ4 is the right choice when speed is the primary concern. Zstd is the right choice when ratio matters or when you need fine-grained control over the speed/ratio tradeoff.
 
 ## Best Practices
 
-1. **Use level 1 by default.** Higher LZ4 levels improve ratio but reduce speed. If ratio matters, consider switching to Zstd instead.
+1. **Use LZ4 without level options.** ExCodecs exposes its fixed fast profile.
+   If ratio matters, consider Zstd or Blosc2 with `cname: :lz4hc`.
 
 2. **Measure the compression ratio on your data.** If LZ4 provides less than 1.5:1 ratio, compression may not be worth the CPU cost.
 

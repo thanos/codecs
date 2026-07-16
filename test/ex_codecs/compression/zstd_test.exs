@@ -20,10 +20,30 @@ defmodule ExCodecs.Compression.ZstdTest do
     end
 
     test "higher levels produce smaller or equal output" do
-      data = :crypto.strong_rand_bytes(10_000)
+      # Random data is poorly compressible; use repetitive payload so buckets matter.
+      data = String.duplicate("AAAA", 5_000)
       {:ok, c1} = Zstd.encode(data, level: 1)
       {:ok, c19} = Zstd.encode(data, level: 19)
       assert byte_size(c19) <= byte_size(c1)
+    end
+
+    test "level buckets produce distinct frames for compressible data" do
+      # Varied compressible payload so numeric levels diverge.
+      data =
+        for i <- 1..8_000, into: <<>> do
+          <<rem(i, 997)::32, "PATTERN-REPEAT">>
+        end
+
+      {:ok, l1} = Zstd.encode(data, level: 1)
+      {:ok, l3} = Zstd.encode(data, level: 3)
+      {:ok, l15} = Zstd.encode(data, level: 15)
+
+      distinct = MapSet.new([l1, l3, l15])
+      assert MapSet.size(distinct) >= 2
+
+      for frame <- [l1, l3, l15] do
+        assert {:ok, ^data} = Zstd.decode(frame, [])
+      end
     end
 
     test "level effectiveness: higher levels produce smaller or equal output for compressible data" do
@@ -82,6 +102,21 @@ defmodule ExCodecs.Compression.ZstdTest do
 
     test "returns error for invalid data" do
       assert {:error, _} = Zstd.decode("not compressed", [])
+    end
+
+    test "rejects decompress when max_output_size is too small" do
+      data = String.duplicate("AAAA", 256)
+      {:ok, compressed} = Zstd.encode(data, [])
+
+      assert {:error, %ExCodecs.Error{reason: :output_limit_exceeded}} =
+               Zstd.decode(compressed, max_output_size: 8)
+    end
+
+    test "rejects invalid max_output_size" do
+      {:ok, compressed} = Zstd.encode("hi", [])
+
+      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
+               Zstd.decode(compressed, max_output_size: 0)
     end
   end
 

@@ -7,7 +7,12 @@ defmodule ExCodecs.Compression.Lz4 do
 
   ## Options
 
-  None.
+    * `:max_output_size` — Maximum allowed decompressed size in bytes
+      (default: 256 MiB).
+
+  ## Security
+
+  Do not decompress untrusted inputs without a tight `:max_output_size`.
 
   ## Examples
 
@@ -116,8 +121,8 @@ defmodule ExCodecs.Compression.Lz4 do
 
     * `data` (`binary()`) — a size-prepended `lz4_flex` block, normally
       produced by `encode/2`
-    * `opts` (`term()`) — ignored by this direct function; callers using the
-      codec behaviour or registry API should pass the keyword list `[]`
+    * `opts` (`keyword()`) — optional `:max_output_size` (positive integer
+      bytes, default 256 MiB)
 
   ## Returns
 
@@ -125,6 +130,10 @@ defmodule ExCodecs.Compression.Lz4 do
     * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when `data` is not a
       binary, the NIF raises an argument error, or it returns an unexpected
       value
+    * `{:error, %ExCodecs.Error{reason: :invalid_options}}` when
+      `:max_output_size` is not a positive integer
+    * `{:error, %ExCodecs.Error{reason: :output_limit_exceeded}}` when the
+      claimed or actual size exceeds `:max_output_size`
     * `{:error, %ExCodecs.Error{reason: :decompression_failed}}` when the size
       prefix or compressed block is corrupt, truncated, or incompatible
     * `{:error, %ExCodecs.Error{reason: :nif_not_loaded}}` when the native
@@ -148,8 +157,10 @@ defmodule ExCodecs.Compression.Lz4 do
       :decompression_failed
   """
   @impl true
-  def decode(data, _opts) when is_binary(data) do
-    ExCodecs.NIF.safe_call(:lz4, fn -> ExCodecs.Native.lz4_decompress(data) end)
+  def decode(data, opts) when is_binary(data) and is_list(opts) do
+    with {:ok, max} <- ExCodecs.NIF.max_output_size(opts) do
+      ExCodecs.NIF.safe_call(:lz4, fn -> ExCodecs.Native.lz4_decompress(data, max) end)
+    end
   end
 
   def decode(_data, _opts), do: {:error, ExCodecs.Error.new(:invalid_data, codec: :lz4)}

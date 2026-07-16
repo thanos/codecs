@@ -1,14 +1,16 @@
 defmodule ExCodecs.CodecRegistry do
   @moduledoc """
-  Runtime registry of **binary** codecs (ETS-backed).
+  Shared runtime catalog of codec implementations (ETS-backed).
 
-  Populated at application start (and again if this process restarts). Spatial
-  formats are **not** registered here — use `ExCodecs.Spatial`.
+  Populated at application start (and again if this process restarts). Entries
+  carry a category and interface shape: binary codecs use the top-level
+  registry API, while spatial entries are dispatched through
+  `ExCodecs.Spatial`.
 
   ## Typical use
 
       iex> ExCodecs.available_codecs()
-      [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+      [:blosc2, :bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
 
       iex> ExCodecs.supports?(:zstd)
       true
@@ -71,7 +73,7 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Registers a module that validates as `ExCodecs.Codec`.
+  Registers a binary-interface module that exports `encode/2` and `decode/2`.
 
   ## Arguments
 
@@ -103,7 +105,58 @@ defmodule ExCodecs.CodecRegistry do
   """
   @spec register(atom(), module(), atom()) :: :ok | {:error, term()}
   def register(name, module, category) do
-    codec_info = build_codec_info(name, module, category)
+    register(name, module, category, :binary)
+  end
+
+  @doc """
+  Registers a module in the shared catalog with an explicit interface.
+
+  `:binary` entries are dispatched by `ExCodecs.encode/3` / `decode/3`.
+  `:spatial` entries are discoverable from the same catalog but dispatched by
+  `ExCodecs.Spatial`.
+
+  ## Arguments
+
+    * `name` — catalog key
+    * `module` — module exporting `encode/2` and `decode/2`
+    * `category` — grouping atom such as `:compression` or `:spatial`
+    * `interface` — `:binary` or `:spatial`
+
+  ## Returns
+
+  `:ok` on registration or `{:error, {:invalid_codec_module, module}}`.
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry table has not started, or propagate
+  an exception from a module's optional `__codec_info__/0`.
+
+  ## Examples
+
+      iex> :ok = ExCodecs.CodecRegistry.register(
+      ...>   :documented_ply,
+      ...>   ExCodecs.Spatial.Codec.PLY,
+      ...>   :spatial,
+      ...>   :spatial
+      ...> )
+      iex> {:ok, info} = ExCodecs.CodecRegistry.codec_info(:documented_ply)
+      iex> {info.category, info.interface}
+      {:spatial, :spatial}
+      iex> ExCodecs.CodecRegistry.unregister(:documented_ply)
+      :ok
+  """
+  @spec register(atom(), module(), atom(), :binary | :spatial) :: :ok | {:error, term()}
+  def register(name, module, category, interface)
+      when interface in [:binary, :spatial] do
+    register(name, module, category, interface, [])
+  end
+
+  @doc false
+  @spec register(atom(), module(), atom(), :binary | :spatial, keyword()) ::
+          :ok | {:error, term()}
+  def register(name, module, category, interface, metadata)
+      when interface in [:binary, :spatial] and is_list(metadata) do
+    codec_info = build_codec_info(name, module, category, interface, metadata)
 
     case ExCodecs.Codec.validates?(module) do
       true ->
@@ -142,9 +195,17 @@ defmodule ExCodecs.CodecRegistry do
   """
   @spec register_unavailable(atom(), atom()) :: :ok
   def register_unavailable(name, category) do
+    register_unavailable(name, category, :binary)
+  end
+
+  @doc false
+  @spec register_unavailable(atom(), atom(), :binary | :spatial) :: :ok
+  def register_unavailable(name, category, interface)
+      when interface in [:binary, :spatial] do
     codec_info = %ExCodecs.Codec{
       name: name,
       category: category,
+      interface: interface,
       module: nil,
       native?: false,
       streaming?: false,
@@ -247,6 +308,36 @@ defmodule ExCodecs.CodecRegistry do
   def available_codecs do
     :ets.tab2list(@table_name)
     |> Enum.filter(fn {_name, {module, _category, _info}} -> module != nil end)
+    |> Enum.map(fn {name, _} -> name end)
+    |> Enum.sort()
+  end
+
+  @doc """
+  Sorted available catalog names in one category.
+
+  ## Arguments
+
+    * `category` — category atom such as `:compression` or `:spatial`
+
+  ## Returns
+
+  Available names with non-`nil` modules, sorted by name.
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry table has not started.
+
+  ## Examples
+
+      iex> ExCodecs.CodecRegistry.available_codecs(:spatial)
+      [:gsplat, :ply, :spatial_binary]
+  """
+  @spec available_codecs(atom()) :: [atom()]
+  def available_codecs(category) when is_atom(category) do
+    :ets.tab2list(@table_name)
+    |> Enum.filter(fn {_name, {module, cat, _info}} ->
+      module != nil and cat == category
+    end)
     |> Enum.map(fn {name, _} -> name end)
     |> Enum.sort()
   end
@@ -379,7 +470,7 @@ defmodule ExCodecs.CodecRegistry do
     |> Enum.sort_by(& &1.name)
   end
 
-  defp build_codec_info(name, module, category) do
+  defp build_codec_info(name, module, category, interface, metadata) do
     info =
       if function_exported?(module, :__codec_info__, 0) do
         module.__codec_info__()
@@ -390,11 +481,12 @@ defmodule ExCodecs.CodecRegistry do
     %ExCodecs.Codec{
       name: name,
       category: category,
+      interface: interface,
       module: module,
-      native?: info.native?,
-      streaming?: info.streaming?,
-      configurable?: info.configurable?,
-      version: info.version
+      native?: Keyword.get(metadata, :native?, info.native?),
+      streaming?: Keyword.get(metadata, :streaming?, info.streaming?),
+      configurable?: Keyword.get(metadata, :configurable?, info.configurable?),
+      version: Keyword.get(metadata, :version, info.version)
     }
   end
 end

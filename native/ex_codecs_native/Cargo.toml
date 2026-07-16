@@ -3,7 +3,7 @@ name = "ex_codecs_native"
 version = "0.2.0"
 authors = ["ExCodecs Team"]
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.92"
 
 [lib]
 name = "ex_codecs_native"
@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 rustler = { version = "0.36", default-features = false, features = ["derive"] }
 # Pure-Rust codecs only — no C compression toolchain (no cmake/c-blosc2).
-ruzstd = "0.8"
+structured-zstd = "0.0.48"
 lz4_flex = "0.11"
 snap = "1.1"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

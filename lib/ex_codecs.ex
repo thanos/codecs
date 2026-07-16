@@ -2,26 +2,25 @@ defmodule ExCodecs do
   @moduledoc """
   Extensible BEAM-native **codec framework** for Elixir.
 
-  ## Public API (one shape)
+  ## One framework, specialized category APIs
 
-  Registry binary codecs always use:
+  Binary→binary registry codecs use:
 
       ExCodecs.encode(codec_atom, binary, opts \\\\ [])
       ExCodecs.decode(codec_atom, binary, opts \\\\ [])
 
-  That is the primary framework entry point — the same model as the original
-  library. Lookups go through `ExCodecs.CodecRegistry`.
-
-  **Category modules** are namespaces and helpers, not a second encode/decode
-  protocol:
+  All implementations are registered in the shared `ExCodecs.CodecRegistry`
+  catalog. Category modules provide entry points suited to their data:
 
     * `ExCodecs.Compression` — `compress/3` / `decompress/3` aliases of the
       registry API, plus listing codecs in the compression category
     * `ExCodecs.Spatial` — domain types and formats for point clouds /
-      Gaussians (struct ↔ format). Spatial is not binary→binary, so it does
-      not use `encode(:ply, binary)`; call `ExCodecs.Spatial.encode/2` instead
+      Gaussians (struct↔format). Call `ExCodecs.Spatial.encode/2` and
+      `ExCodecs.Spatial.decode/2`
 
-  Registry encoding and decoding therefore keep the codec atom first:
+  The APIs belong to one framework and share tagged results and
+  `%ExCodecs.Error{}` conventions. They are not overloaded because their input
+  shapes differ. Registry encoding and decoding keep the codec atom first:
 
       {:ok, compressed} = ExCodecs.encode(:zstd, data)
       {:ok, decoded} = ExCodecs.decode(:zstd, compressed)
@@ -30,7 +29,7 @@ defmodule ExCodecs do
 
   | Codec | Notes |
   |-------|--------|
-  | `:zstd` | Pure-Rust Zstd (`ruzstd`) |
+  | `:zstd` | Pure-Rust Zstd (`structured-zstd`) |
   | `:lz4` | Size-prepended `lz4_flex` blocks |
   | `:snappy` | Standalone Snappy codec |
   | `:bzip2` | Pure-Rust bzip2 |
@@ -66,7 +65,7 @@ defmodule ExCodecs do
       {:ok, cloud} = ExCodecs.Spatial.decode(ply, format: :ply)
 
       ExCodecs.available_codecs()
-      #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+      #=> [:blosc2, :bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
 
   ## Error policy
 
@@ -132,6 +131,10 @@ defmodule ExCodecs do
 
   def encode(codec, data, opts) when is_atom(codec) and is_binary(data) and is_list(opts) do
     case CodecRegistry.lookup(codec) do
+      {:ok, {_module, _category, %{interface: interface}}}
+      when interface != :binary ->
+        interface_error(codec, :encode)
+
       {:ok, {module, _category, info}} ->
         case ensure_available(info, codec) do
           :ok -> module.encode(data, opts)
@@ -213,6 +216,10 @@ defmodule ExCodecs do
 
   def decode(codec, data, opts) when is_atom(codec) and is_binary(data) and is_list(opts) do
     case CodecRegistry.lookup(codec) do
+      {:ok, {_module, _category, %{interface: interface}}}
+      when interface != :binary ->
+        interface_error(codec, :decode)
+
       {:ok, {module, _category, info}} ->
         case ensure_available(info, codec) do
           :ok -> module.decode(data, opts)
@@ -344,16 +351,14 @@ defmodule ExCodecs do
   @doc """
   Lists **registered** codec atoms that are available at runtime.
 
-  Spatial formats are **not** included — use `ExCodecs.Spatial.available_formats/0`.
-
   ## Arguments
 
   None.
 
   ## Returns
 
-  A sorted `[atom()]` containing registered entries whose implementation module
-  is non-`nil`, for example `[:blosc2, :bzip2, :lz4, :snappy, :zstd]`.
+  A sorted `[atom()]` containing every shared-catalog entry whose
+  implementation module is non-`nil`, including binary and spatial codecs.
 
   ## Raises
 
@@ -370,10 +375,33 @@ defmodule ExCodecs do
   end
 
   @doc """
-  Returns whether a **registered** codec is available.
+  Lists available codec names in one category.
 
-  Spatial format atoms (`:ply`, …) always return `false` here — use
-  `ExCodecs.Spatial.supports?/1`.
+  ## Arguments
+
+    * `category` — category atom such as `:compression` or `:spatial`
+
+  ## Returns
+
+  A sorted list of available names in that category.
+
+  ## Raises
+
+  Raises `FunctionClauseError` for a non-atom category and may raise
+  `ArgumentError` if the shared catalog has not started.
+
+  ## Examples
+
+      iex> ExCodecs.available_codecs(:spatial)
+      [:gsplat, :ply, :spatial_binary]
+  """
+  @spec available_codecs(atom()) :: [atom()]
+  def available_codecs(category) when is_atom(category) do
+    CodecRegistry.available_codecs(category)
+  end
+
+  @doc """
+  Returns whether a shared-catalog codec is available.
 
   ## Arguments
 
@@ -411,8 +439,9 @@ defmodule ExCodecs do
 
   ## Returns
 
-    * `{:ok, ExCodecs.Codec.t()}` — name, category, module, capability flags,
-      and backend version; unavailable codecs are returned with `module: nil`
+    * `{:ok, ExCodecs.Codec.t()}` — name, category, interface, module,
+      capability flags, and backend version; unavailable codecs are returned
+      with `module: nil`
     * `{:error, :unsupported_codec}` — not registered (note: bare atom, not `%Error{}`)
 
   ## Raises
@@ -441,5 +470,15 @@ defmodule ExCodecs do
     else
       {:error, Error.new(:codec_unavailable, codec: codec)}
     end
+  end
+
+  defp interface_error(codec, operation) do
+    {:error,
+     Error.new(:invalid_options,
+       codec: codec,
+       message:
+         "#{inspect(codec)} uses the spatial category API; call " <>
+           "ExCodecs.Spatial.#{operation}/2 with format: #{inspect(codec)}"
+     )}
   end
 end

@@ -1,15 +1,18 @@
 defmodule ExCodecs.Codec do
   @moduledoc """
-  Behaviour and metadata struct for **registry** binary codecs.
+  Binary-codec behaviour and shared catalog metadata.
 
-  Every module registered with `ExCodecs.CodecRegistry` should implement
-  `encode/2` and `decode/2` on **binaries**. Spatial format codecs do **not**
-  use this behaviour (they live under `ExCodecs.Spatial`).
+  Binary-interface modules registered with `ExCodecs.CodecRegistry` implement
+  this module's `encode/2` and `decode/2` callbacks on **binaries**. Spatial
+  entries share the catalog metadata struct but use the specialized
+  `ExCodecs.Spatial` contract because they map domain structs↔formats.
 
-  The `%ExCodecs.Codec{}` struct describes a registry entry. Its fields are:
+  The `%ExCodecs.Codec{}` struct describes any shared-catalog entry. Its fields
+  are:
 
     * `name` (`atom()`) — registry key, such as `:zstd`
-    * `category` (`atom()`) — codec category, currently `:compression`
+    * `category` (`atom()`) — codec category, such as `:compression` or `:spatial`
+    * `interface` (`:binary | :spatial`) — public API shape used by the entry
     * `module` (`module() | nil`) — implementation module, or `nil` when the
       codec is known but unavailable
     * `native?` (`boolean()`) — whether the implementation uses a NIF
@@ -46,7 +49,7 @@ defmodule ExCodecs.Codec do
             native?: true,
             streaming?: false,
             configurable?: true,
-            version: "ruzstd-0.8"
+            version: "structured-zstd-0.0.48"
           }
         end
       end
@@ -191,14 +194,16 @@ defmodule ExCodecs.Codec do
   @callback decode(data :: binary(), opts :: keyword()) :: decode_result()
 
   @typedoc """
-  Metadata for one binary codec registry entry.
+  Metadata for one shared codec-catalog entry.
 
   Every field is public:
 
-    * `name` — registry atom passed to `ExCodecs.encode/3` and
-      `ExCodecs.decode/3`
+    * `name` — catalog atom; binary entries can be passed to
+      `ExCodecs.encode/3` and `ExCodecs.decode/3`
     * `category` — grouping atom used by
       `ExCodecs.CodecRegistry.codecs_by_category/1`
+    * `interface` — `:binary` for the top-level registry API or `:spatial` for
+      `ExCodecs.Spatial`
     * `module` — callback implementation, or `nil` for an unavailable codec
     * `native?` — indicates NIF-backed operation
     * `streaming?` — indicates incremental processing support
@@ -215,6 +220,7 @@ defmodule ExCodecs.Codec do
   @type t :: %__MODULE__{
           name: atom(),
           category: atom(),
+          interface: :binary | :spatial,
           module: module() | nil,
           native?: boolean(),
           streaming?: boolean(),
@@ -222,7 +228,14 @@ defmodule ExCodecs.Codec do
           version: String.t() | nil
         }
 
-  defstruct [:name, :category, :module, :native?, :streaming?, :configurable?, :version]
+  defstruct name: nil,
+            category: nil,
+            interface: :binary,
+            module: nil,
+            native?: nil,
+            streaming?: nil,
+            configurable?: nil,
+            version: nil
 
   @doc """
   Returns whether `module` exports `encode/2` and `decode/2`.

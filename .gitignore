@@ -25,7 +25,6 @@ ex_codecs-*.tar
 
 # Rust artifacts
 /native/ex_codecs_native/target/
-/native/ex_codecs_native/Cargo.lock
 
 # Rustler precompiled cache
 /priv/native/

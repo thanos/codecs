@@ -2,19 +2,59 @@
 
 This guide helps you select the right compression codec for your use case. It includes a comparison table, decision criteria, and worked examples.
 
+> ### Is the data spatial—or spatially representable?
+>
+> Compression codecs operate on arbitrary binaries. If records represent
+> coordinates, points, normals, colors, oriented particles, or Gaussian splats,
+> consider converting them to `ExCodecs.Spatial` types first—even when the
+> source is currently a flat array, CSV rows, maps, or database records.
+>
+> Use:
+>
+> - `ExCodecs.Spatial.PointCloud` for XYZ, XYZRGB(A), normals, and scalar
+>   per-point attributes.
+> - `ExCodecs.Spatial.GaussianCloud` for position, scale, rotation, opacity,
+>   color, and spherical harmonics.
+> - `:ply` for interoperable spatial exchange.
+> - `:spatial_binary` (EXCP) for compact point clouds.
+> - `:gsplat` (GSPL) for compact Gaussian clouds.
+>
+> Spatial encoding and compression are complementary. Encode the structured
+> data first, then optionally compress the resulting binary:
+>
+> ```elixir
+> alias ExCodecs.Spatial.{Point, PointCloud}
+>
+> cloud =
+>   rows
+>   |> Enum.map(fn %{x: x, y: y, z: z} -> Point.new(x, y, z) end)
+>   |> PointCloud.new()
+>
+> {:ok, spatial_binary} =
+>   ExCodecs.Spatial.encode(cloud, format: :spatial_binary)
+>
+> {:ok, compressed} = ExCodecs.encode(:zstd, spatial_binary, level: 3)
+> ```
+>
+> If the numbers have no geometric meaning and only need compact storage,
+> Blosc2 may be a better fit. See
+> [Understanding Spatial Codecs](understanding_spatial_codecs.md) and
+> [Spatial Wire Formats](../docs/spatial_formats.md).
+
 ## Quick Comparison
 
 | Codec    | Compression Ratio | Compression Speed | Decompression Speed | Memory Usage | Configurable | Streaming | Best For                          |
 |----------|-------------------|-------------------|---------------------|--------------|--------------|-----------|-----------------------------------|
-| LZ4      | Low               | Very Fast         | Very Fast           | Very Low     | Level 1-16   | No        | Real-time, latency-sensitive      |
+| LZ4      | Low               | Very Fast         | Very Fast           | Very Low     | No           | No        | Real-time, latency-sensitive      |
 | Snappy   | Low               | Very Fast         | Very Fast           | Very Low     | No           | No        | Short-lived data, RPC payloads    |
-| Zstd     | High              | Fast              | Very Fast            | Moderate     | Level 1-22   | Yes       | General purpose, storage, network |
+| Zstd     | High              | Fast              | Very Fast           | Moderate     | Levels 1-22  | No        | General purpose, storage, network |
 | Bzip2    | Very High         | Slow              | Slow                | Moderate     | Block 1-9    | No        | Archival, offline processing      |
-| Blosc2   | High*             | Fast              | Very Fast**          | Configurable | Extensive    | Yes       | Numerical arrays, typed data      |
+| Blosc2   | High*             | Fast              | Very Fast           | Moderate     | Codec/level/shuffle/typesize | No | Numerical arrays, typed data |
 
 \* Blosc2 ratio depends heavily on the internal codec (`cname`) and shuffle settings. With byte shuffle on typed data, ratios can exceed Zstd.
 
-\** Blosc2 decompression is fast because it can skip the decompression of unused blocks.
+“Streaming” here means an incremental compression API. All current compression
+codecs operate on complete input buffers.
 
 ## Decision Framework
 
@@ -22,8 +62,11 @@ Answer the following questions to narrow your choice:
 
 ### 1. What is your data type?
 
+- **Coordinates, point samples, particles, normals, or Gaussian splats** --
+  model them with `ExCodecs.Spatial`, even if they currently arrive as arrays,
+  rows, maps, or CSV. Optionally compress the encoded PLY/EXCP/GSPL binary.
 - **Text, JSON, logs, general-purpose binary** -- Zstd is the best default. Use level 3 for a balance of speed and ratio.
-- **Typed numerical arrays (floats, integers, matrices)** -- Blosc2 with appropriate `typesize` and `shuffle` settings.
+- **Typed numerical arrays without spatial semantics (floats, integers, matrices)** -- Blosc2 with appropriate `typesize` and `shuffle` settings.
 - **Short-lived messages, RPC payloads** -- Snappy or LZ4 for minimal latency.
 - **Archival storage** -- Bzip2 for maximum ratio, or Zstd at level 19-22 for high ratio with better decompression speed.
 
@@ -43,7 +86,7 @@ Answer the following questions to narrow your choice:
 
 - **Very constrained (embedded, large concurrent load)** -- LZ4 or Snappy.
 - **Moderate** -- Zstd at levels 1-14.
-- **Available** -- Zstd at levels 15-22, Bzip2 at block sizes 7-9, Blosc2 multi-threaded.
+- **Available** -- Zstd at levels 15-22 or Bzip2 at block sizes 7-9.
 
 ### 5. Is data read once or many times?
 
@@ -57,9 +100,9 @@ Answer the following questions to narrow your choice:
 
 ```elixir
 {:ok, compressed} = ExCodecs.encode(:lz4, data)
-{:ok, compressed} = ExCodecs.encode(:lz4, data, level: 4)
 ```
 
+- ExCodecs exposes one fixed, fast LZ4 profile; it does not accept `:level`.
 - Low-latency message queues
 - Real-time data pipelines where throughput matters more than size
 - Temporary data that will be decompressed quickly
@@ -87,7 +130,8 @@ Answer the following questions to narrow your choice:
 - Databases, file storage, and network transmission
 - Workloads where decompression speed matters (Zstd decompresses fast regardless of compression level)
 - When you need a configurable tradeoff (22 levels from fast to maximum ratio)
-- Dictionary compression for small, repetitive payloads
+
+ExCodecs does not currently expose Zstd dictionary compression.
 
 ### When to Use Bzip2
 
@@ -109,8 +153,10 @@ Answer the following questions to narrow your choice:
 - Numerical arrays (float64, int32, etc.)
 - Scientific data, time series, matrix storage
 - Situations where shuffle filters provide a significant ratio improvement
-- Multi-threaded compression/decompression of large buffers
 - When you need fine-grained control over the compression pipeline
+
+Each Blosc2 NIF call is single-threaded (`nthreads: 1`). Parallelize independent
+buffers with BEAM processes.
 
 ## Worked Examples
 
@@ -134,13 +180,14 @@ Rationale: Zstd decompresses quickly regardless of compression level, so invest 
 
 Messages arrive at high volume and must be forwarded with minimal latency.
 
-**Choice: LZ4 at level 1**
+**Choice: LZ4**
 
 ```elixir
-{:ok, compressed} = ExCodecs.encode(:lz4, message, level: 1)
+{:ok, compressed} = ExCodecs.encode(:lz4, message)
 ```
 
-Rationale: Latency is the priority. LZ4 at level 1 provides compression at over 500 MB/s, adding negligible overhead to the pipeline.
+Rationale: Latency is the priority. ExCodecs' fixed fast LZ4 profile adds
+minimal overhead to the pipeline.
 
 ### Example 3: Scientific Data Archive
 
@@ -153,8 +200,7 @@ A research pipeline archives float64 measurement arrays to cold storage.
   cname: :zstd,
   clevel: 9,
   shuffle: :byte,
-  typesize: 8,
-  numthreads: 4
+  typesize: 8
 )
 ```
 
@@ -191,10 +237,11 @@ Rationale: Protobuf already removes much redundancy. Snappy adds minimal overhea
 | Use Case                     | Recommended Codec | Configuration                       |
 |------------------------------|-------------------|-------------------------------------|
 | General-purpose default      | Zstd              | `level: 3`                          |
-| Real-time / low-latency      | LZ4               | `level: 1`                           |
+| Real-time / low-latency      | LZ4               | No codec-specific options            |
 | Fastest with no config       | Snappy            | (none)                               |
 | Maximum ratio / archival     | Bzip2 or Zstd     | `block_size: 9` or `level: 19-22`   |
 | Numerical arrays             | Blosc2            | `cname: :zstd, shuffle: :byte`      |
-| Small repetitive payloads    | Zstd              | `level: 3` with dictionary          |
-| In-memory cache              | LZ4 or Snappy     | `level: 1` or (none)                |
-| Already slightly compressed | Snappy or LZ4    | Lowest level to avoid wasted CPU     |
+| Spatially meaningful records | Spatial + optional compression | PLY/EXCP/GSPL, then optionally Zstd |
+| Small repetitive payloads    | Zstd              | `level: 3` (dictionary API unavailable) |
+| In-memory cache              | LZ4 or Snappy      | No codec-specific options            |
+| Already slightly compressed  | Snappy or LZ4      | No codec-specific options            |

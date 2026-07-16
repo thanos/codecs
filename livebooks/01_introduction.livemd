@@ -7,7 +7,7 @@ ex_codecs_dep =
   if File.exists?(local_path) do
     [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
   else
-    [{:ex_codecs, "~> 0.1"}]
+    [{:ex_codecs, "~> 0.2.0"}]
   end
 
 config =
@@ -27,13 +27,20 @@ A **codec** (coder-decoder) is an abstraction for transforming data between two 
 * **Encode** — transform data into a compact or structured form
 * **Decode** — recover the original data from the encoded form
 
-For compression codecs, encoding means compressing and decoding means decompressing. But the codec abstraction extends beyond compression — it can represent hashing, checksums, binary encodings, and content-addressing transforms, all through the same `encode`/`decode` interface.
+For compression codecs, encoding means compressing and decoding means
+decompressing. ExCodecs is one framework with category APIs shaped for their
+data: binary registry codecs use `ExCodecs.encode/3` / `decode/3`, while
+point-cloud and Gaussian formats use `ExCodecs.Spatial`.
 
 ```elixir
-# The universal codec interface:
+# Binary registry interface:
 #   {:ok, encoded} = ExCodecs.encode(:some_codec, data)
 #   {:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
 #   decoded == data  # round-trip guarantee
+#
+# Spatial category interface:
+#   {:ok, encoded} = ExCodecs.Spatial.encode(cloud, format: :ply)
+#   {:ok, decoded} = ExCodecs.Spatial.decode(encoded, format: :ply)
 ```
 
 ## Why Codecs Matter
@@ -54,9 +61,9 @@ A codec framework gives you a **single consistent API** over multiple algorithms
 
 ExCodecs is a **codec framework**, not just a compression library:
 
-1. **Unified API** — `encode/3` and `decode/3` work identically across all codecs
-2. **Runtime discovery** — query available codecs, check support, get metadata
-3. **Extensible** — the `ExCodecs.Codec` behaviour lets you add new codec categories
+1. **Specialized category APIs** — one framework without unsafe argument overloading
+2. **Shared catalog** — query binary and spatial codecs, support, and metadata
+3. **Extensible** — binary codecs use `ExCodecs.Codec`; domain categories can define suitable contracts
 4. **NIF-native** — Rust-powered NIFs for production throughput
 5. **Consistent errors** — structured `%ExCodecs.Error{}` for all failure modes
 
@@ -104,8 +111,8 @@ IO.puts("Bzip2 block 9: #{byte_size(bz_max)} bytes")
 # Blosc2 shines with typed binary data
 data = :binary.copy(<<0, 0, 0, 0, 1, 1, 1, 1>>, 512)
 
-{:ok, plain} = ExCodecs.encode(:blosc2, data, shuffle: :none)
-{:ok, shuffled} = ExCodecs.encode(:blosc2, data, shuffle: :byte)
+{:ok, plain} = ExCodecs.encode(:blosc2, data, typesize: 1, shuffle: :none)
+{:ok, shuffled} = ExCodecs.encode(:blosc2, data, typesize: 1, shuffle: :byte)
 
 IO.puts("Original:        #{byte_size(data)} bytes")
 IO.puts("Blosc2 (no shuffle): #{byte_size(plain)} bytes")
@@ -116,7 +123,9 @@ IO.puts("Blosc2 (byte shuffle): #{byte_size(shuffled)} bytes")
 
 ```elixir
 codecs = ExCodecs.available_codecs()
-IO.puts("Available codecs: #{inspect(codecs)}")
+IO.puts("Shared catalog: #{inspect(codecs)}")
+IO.puts("Compression:    #{inspect(ExCodecs.available_codecs(:compression))}")
+IO.puts("Spatial:        #{inspect(ExCodecs.available_codecs(:spatial))}")
 ```
 
 ### Codec Details
@@ -127,6 +136,7 @@ for codec <- codecs do
   IO.puts(String.duplicate("-", 50))
   IO.puts("Codec:         #{info.name}")
   IO.puts("Category:      #{info.category}")
+  IO.puts("Interface:     #{info.interface}")
   IO.puts("Native?:       #{info.native?}")
   IO.puts("Streaming?:    #{info.streaming?}")
   IO.puts("Configurable?: #{info.configurable?}")
@@ -138,11 +148,12 @@ end
 
 | Codec     | Category    | Configurable           | Streaming | Best For                       |
 | --------- | ----------- | ---------------------- | --------- | ------------------------------ |
-| `:zstd`   | compression | Yes (level 1–22)     | Yes       | General-purpose, high ratio    |
-| `:lz4`    | compression | Yes (level 1–16)     | No        | Real-time, low latency         |
+| `:zstd`   | compression | Yes (level 1–22)     | No        | General-purpose, high ratio    |
+| `:lz4`    | compression | No                     | No        | Real-time, low latency         |
 | `:snappy` | compression | No                     | No        | Short-lived data, low overhead |
 | `:bzip2`  | compression | Yes (block_size 1–9) | No        | Archival, maximum ratio        |
-| `:blosc2` | compression | Yes (many options)     | Yes       | Numerical/array data           |
+| `:blosc2` | compression | Yes (codec/shuffle)    | No        | Numerical/array data           |
+| `:ply` / `:spatial_binary` / `:gsplat` | spatial | Format-specific | No | Point clouds / Gaussians |
 
 ## Error Handling
 

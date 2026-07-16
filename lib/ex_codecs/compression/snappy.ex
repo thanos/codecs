@@ -8,7 +8,12 @@ defmodule ExCodecs.Compression.Snappy do
 
   ## Options
 
-  None.
+    * `:max_output_size` — Maximum allowed decompressed size in bytes
+      (default: 256 MiB).
+
+  ## Security
+
+  Do not decompress untrusted inputs without a tight `:max_output_size`.
 
   ## Examples
 
@@ -150,8 +155,10 @@ defmodule ExCodecs.Compression.Snappy do
       :decompression_failed
   """
   @impl true
-  def decode(data, _opts) when is_binary(data) do
-    ExCodecs.NIF.safe_call(:snappy, fn -> ExCodecs.Native.snappy_decompress(data) end)
+  def decode(data, opts) when is_binary(data) and is_list(opts) do
+    with {:ok, max} <- ExCodecs.NIF.max_output_size(opts) do
+      ExCodecs.NIF.safe_call(:snappy, fn -> ExCodecs.Native.snappy_decompress(data, max) end)
+    end
   end
 
   def decode(_data, _opts), do: {:error, ExCodecs.Error.new(:invalid_data, codec: :snappy)}

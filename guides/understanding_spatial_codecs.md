@@ -1,12 +1,15 @@
 # Understanding Spatial Codecs
 
-ExCodecs includes a spatial **category module** (`ExCodecs.Spatial`) for
-continuous and geometric data: point clouds and Gaussian splats. These codecs
-map between structured Elixir types and interchange formats. They do not render
-or use NIFs — pure Elixir.
+Spatial is a category in the ExCodecs framework for continuous and geometric
+data: point clouds and Gaussian splats. These codecs map between structured
+Elixir types and interchange formats. They do not render or use NIFs — pure
+Elixir.
 
-The top-level registry API (`ExCodecs.encode(codec, binary)`) is **not** used
-for spatial data. Always call `ExCodecs.Spatial.*`.
+ExCodecs uses specialized category APIs because data shapes differ. The
+top-level registry API handles binary→binary codecs; spatial struct↔format work
+uses `ExCodecs.Spatial.*`. Both follow the framework's tagged-result and
+structured-error conventions, and both are registered in the shared codec
+catalog.
 
 ## Domain Types
 
@@ -37,12 +40,17 @@ PLY encode options (after Spatial `format: :ply` is selected):
 - `:source` — for streams: `:auto` (default), `:file`, or `:binary`
 
 Spatial stream helpers materialize the full payload today (lazy enumeration of
-an in-memory list). Pass `source: :file` when the argument is a filesystem path.
+an in-memory list). Prefer explicit `source: :file` or `source: :binary`.
+With `:auto`, a binary is opened as a path only when it looks path-like (under
+4 KiB, no `ply`/`EXCP`/`GSPL` magic, separator or known extension) **and** is a
+regular file. Files without separators/extensions are not auto-detected.
+
+Wire layouts for EXCP/GSPL/PLY schema rules are frozen in
+[Spatial wire formats](../docs/spatial_formats.md).
 
 ## API
 
-Spatial is a **category module** (like `ExCodecs.Compression`). Prefer it over
-the top-level registry API for all spatial work:
+Use the spatial category API for all spatial work:
 
 ```elixir
 alias ExCodecs.Spatial.{Point, PointCloud}
@@ -64,10 +72,12 @@ ExCodecs.Spatial.stream_decode(ply, format: :ply)
 
 ExCodecs.Spatial.available_formats()
 ExCodecs.Spatial.supports?(:ply)
+ExCodecs.available_codecs(:spatial)
+ExCodecs.codec_info(:ply)
 ```
 
-`ExCodecs.encode/3` and `ExCodecs.decode/3` remain **codec atom + binary** only
-(registry compression codecs). Passing a `PointCloud` or `format: :ply` there
+`ExCodecs.encode/3` and `ExCodecs.decode/3` remain **binary-interface codec atom
++ binary** only. Spatial atoms are discoverable there, but operation dispatch
 returns a clear error pointing at this module.
 
 ## Examples

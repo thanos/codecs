@@ -77,6 +77,15 @@ defmodule ExCodecs.CodecRegistryTest do
       codecs = CodecRegistry.available_codecs()
       assert :zstd in codecs
       assert :lz4 in codecs
+      assert :ply in codecs
+      assert :spatial_binary in codecs
+      assert :gsplat in codecs
+    end
+
+    test "filters available codecs by category" do
+      assert CodecRegistry.available_codecs(:spatial) == [:gsplat, :ply, :spatial_binary]
+      assert :zstd in CodecRegistry.available_codecs(:compression)
+      refute :ply in CodecRegistry.available_codecs(:compression)
     end
   end
 
@@ -115,6 +124,14 @@ defmodule ExCodecs.CodecRegistryTest do
     test "returns error for unknown codec" do
       assert {:error, :unsupported_codec} = CodecRegistry.codec_info(:nonexistent_codec_xyz)
     end
+
+    test "returns interface metadata for spatial formats" do
+      assert {:ok, info} = CodecRegistry.codec_info(:ply)
+      assert info.category == :spatial
+      assert info.interface == :spatial
+      assert info.configurable?
+      assert info.version == "PLY 1.0"
+    end
   end
 
   describe "codecs_by_category/1" do
@@ -128,6 +145,12 @@ defmodule ExCodecs.CodecRegistryTest do
 
     test "returns empty list for unknown category" do
       assert [] = CodecRegistry.codecs_by_category(:nonexistent_category_xyz)
+    end
+
+    test "returns shared-catalog spatial entries" do
+      codecs = CodecRegistry.codecs_by_category(:spatial)
+      assert Enum.map(codecs, & &1.name) == [:gsplat, :ply, :spatial_binary]
+      assert Enum.all?(codecs, &(&1.interface == :spatial))
     end
   end
 

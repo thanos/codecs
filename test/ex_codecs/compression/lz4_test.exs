@@ -48,6 +48,14 @@ defmodule ExCodecs.Compression.Lz4Test do
     test "returns error for corrupt data" do
       assert {:error, _} = Lz4.decode(<<0, 1, 2, 3>>, [])
     end
+
+    test "rejects decompress when max_output_size is too small" do
+      data = String.duplicate("ab", 10_000)
+      {:ok, compressed} = Lz4.encode(data, [])
+
+      assert {:error, %ExCodecs.Error{reason: :output_limit_exceeded}} =
+               Lz4.decode(compressed, max_output_size: 16)
+    end
   end
 
   describe "__codec_info__/0" do

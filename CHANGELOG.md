@@ -26,16 +26,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delegate to Spatial for convenience.
 - Example datasets under `priv/examples/spatial/`.
 - Guide: `guides/understanding_spatial_codecs.md`.
+- Wire-format freeze: `docs/spatial_formats.md` (EXCP / GSPL / PLY rules).
+- Spatial tutorial Livebook: `livebooks/06_spatial_codecs.livemd`; existing
+  Livebooks now target v0.2.0 APIs and metadata.
+- Shared codec catalog discovery across compression and spatial categories,
+  including `ExCodecs.available_codecs/1` and `%ExCodecs.Codec{interface: ...}`.
 - Registry `unregister/1` and re-registration on registry process restart.
-- Error reasons `:io_error` and `:truncated_input`.
+- Error reasons `:io_error`, `:truncated_input`, and `:output_limit_exceeded`.
+- Decode option `:max_output_size` (default **256 MiB**) on all compression
+  codecs — rejects decompression bombs.
 
 ### Changed
 
 - **Native NIF is pure Rust** — no C compression libraries:
-  - Zstd via `ruzstd` (not libzstd)
+  - Zstd via `structured-zstd` (not libzstd / not stock `ruzstd` encoder)
   - Bzip2 via `bzip2` + pure-Rust `libbz2-rs-sys`
   - Zlib (Blosc2 inner) via `flate2` rust backend
   - LZ4 / Snappy unchanged pure crates
+- **Zstd `:level`** (1–22) is functional on the pure-Rust encoder (ratios may
+  differ from C libzstd at the same numeric level).
 - **Blosc2**: C-Blosc2-compatible **chunk** format via pure-Rust `blosc2-pure-rs`
   (`:blosclz`, `:lz4`, `:lz4hc`, `:zstd`, `:zlib` + shuffle/bitshuffle).
   Golden tests against python-blosc2 fixtures.
@@ -44,8 +53,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NIF load checked at registration; NIF calls wrapped so `:nif_not_loaded`
   becomes `{:error, %ExCodecs.Error{}}` instead of raising.
 - Safer PLY header parsing (no raise on malformed element lines / unknown types).
+- Point attributes normalized to **string keys** (atoms accepted at `Point.new/4`).
 - Public API docs cover spatial formats alongside compression codecs.
-- Test coverage threshold set to 84% while the new spatial PLY surface grows.
+- Spatial encode/decode resolves PLY, EXCP, and GSPL implementations through
+  the shared ETS catalog while retaining the category-safe Spatial API.
+- Test coverage threshold restored to **95%** after expanding spatial and NIF
+  edge-case coverage.
+
+### Notes
+
+- Precompiled NIF checksums must be regenerated when publishing GitHub release
+  artifacts for `0.2.0`; until then local builds use `force_build` / source compile.
+- `native/ex_codecs_native/Cargo.lock` is committed for reproducible NIF builds.
 
 ## [0.1.1] - 2026-06-15
 

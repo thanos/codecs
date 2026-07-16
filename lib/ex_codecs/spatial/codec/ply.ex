@@ -184,29 +184,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
     with {:ok, header, body} <- split_header(data),
          {:ok, parsed} <- parse_header(header) do
-      case resolve_as(as, parsed.properties) do
-        :point_cloud ->
-          with {:ok, points} <- decode_vertices(body, parsed) do
-            meta =
-              Metadata.new(
-                comments: parsed.comments,
-                entries: %{"ply_format" => to_string(parsed.format)}
-              )
-
-            {:ok, PointCloud.new(points, metadata: meta)}
-          end
-
-        :gaussian_cloud ->
-          with {:ok, gaussians} <- decode_gaussians(body, parsed) do
-            meta =
-              Metadata.new(
-                comments: parsed.comments,
-                entries: %{"ply_format" => to_string(parsed.format)}
-              )
-
-            {:ok, GaussianCloud.new(gaussians, metadata: meta)}
-          end
-      end
+      decode_parsed_body(resolve_as(as, parsed.properties), body, parsed)
     end
   end
 
@@ -255,13 +233,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   def stream_decode(data, opts) when is_binary(data) do
     case resolve_ply_source(data, opts) do
       {:ok, :binary, bin} ->
-        case decode_to_list(bin, opts) do
-          {:ok, items} ->
-            Stream.map(items, & &1)
-
-          {:error, error} ->
-            Stream.resource(fn -> {:error, error} end, &error_stream/1, fn _ -> :ok end)
-        end
+        stream_from_decoded_binary(bin, opts)
 
       {:ok, :file, path} ->
         Stream.resource(
@@ -269,6 +241,16 @@ defmodule ExCodecs.Spatial.Codec.PLY do
           &next_ply_item/1,
           &close_ply_file/1
         )
+    end
+  end
+
+  defp stream_from_decoded_binary(bin, opts) do
+    case decode_to_list(bin, opts) do
+      {:ok, items} ->
+        Stream.map(items, & &1)
+
+      {:error, error} ->
+        Stream.resource(fn -> {:error, error} end, &error_stream/1, fn _ -> :ok end)
     end
   end
 
@@ -308,8 +290,6 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp ply_binary?(<<data::binary>>) do
     String.starts_with?(data, "ply")
   end
-
-  defp ply_binary?(_), do: false
 
   defp split_header(data) do
     case :binary.match(data, "end_header") do
@@ -385,21 +365,28 @@ defmodule ExCodecs.Spatial.Codec.PLY do
         {:error, Error.new(:invalid_data, codec: :ply, message: "No vertex element in PLY")}
 
       idx ->
-        line = Enum.at(lines, idx)
+        parse_vertex_element(lines, idx)
+    end
+  end
 
-        with {:ok, count} <- parse_vertex_count(line) do
-          props =
-            lines
-            |> Enum.drop(idx + 1)
-            |> Enum.take_while(&String.starts_with?(&1, "property "))
-            |> Enum.map(&parse_property/1)
+  defp parse_vertex_element(lines, idx) do
+    with {:ok, count} <- parse_vertex_count(Enum.at(lines, idx)),
+         {:ok, props} <- parse_vertex_properties(lines, idx) do
+      {:ok, count, props}
+    end
+  end
 
-          if Enum.any?(props, &match?({:error, _}, &1)) do
-            {:error, Error.new(:invalid_data, codec: :ply, message: "Invalid PLY property")}
-          else
-            {:ok, count, props}
-          end
-        end
+  defp parse_vertex_properties(lines, idx) do
+    props =
+      lines
+      |> Enum.drop(idx + 1)
+      |> Enum.take_while(&String.starts_with?(&1, "property "))
+      |> Enum.map(&parse_property/1)
+
+    if Enum.any?(props, &match?({:error, _}, &1)) do
+      {:error, Error.new(:invalid_data, codec: :ply, message: "Invalid PLY property")}
+    else
+      {:ok, props}
     end
   end
 
@@ -531,28 +518,25 @@ defmodule ExCodecs.Spatial.Codec.PLY do
       %{type: :float, name: "rot_3"}
     ]
 
-    sh_props =
-      if has_sh? do
-        max_rest =
-          gaussians
-          |> Enum.map(fn g ->
-            case g.sh do
-              nil -> 0
-              [_dc | rest] -> length(List.flatten(rest))
-              _ -> 0
-            end
-          end)
-          |> Enum.max(fn -> 0 end)
-
-        for i <- 0..(max_rest - 1)//1, max_rest > 0 do
-          %{type: :float, name: "f_rest_#{i}"}
-        end
-      else
-        []
-      end
-
-    base ++ sh_props
+    base ++ sh_property_defs(gaussians, has_sh?)
   end
+
+  defp sh_property_defs(_gaussians, false), do: []
+
+  defp sh_property_defs(gaussians, true) do
+    max_rest =
+      gaussians
+      |> Enum.map(&sh_rest_coeff_count/1)
+      |> Enum.max()
+
+    for i <- 0..(max_rest - 1)//1, max_rest > 0 do
+      %{type: :float, name: "f_rest_#{i}"}
+    end
+  end
+
+  defp sh_rest_coeff_count(%{sh: nil}), do: 0
+  defp sh_rest_coeff_count(%{sh: [_dc | rest]}), do: length(List.flatten(rest))
+  defp sh_rest_coeff_count(_), do: 0
 
   defp build_header(format, count, props, comments) do
     format_line =
@@ -579,14 +563,10 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     )
   end
 
-  defp type_name(:char), do: "char"
+  # Encode only ever emits float and uchar properties (attributes are promoted
+  # to float32; see docs/spatial_formats.md), so no other types are needed here.
   defp type_name(:uchar), do: "uchar"
-  defp type_name(:short), do: "short"
-  defp type_name(:ushort), do: "ushort"
-  defp type_name(:int), do: "int"
-  defp type_name(:uint), do: "uint"
   defp type_name(:float), do: "float"
-  defp type_name(:double), do: "double"
 
   defp encode_points(points, props, :ascii) do
     points
@@ -632,15 +612,8 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     cond do
       Map.has_key?(known, name) -> Map.fetch!(known, name)
       Map.has_key?(attributes, name) -> Map.fetch!(attributes, name)
-      true -> attribute_atom_value(attributes, name)
+      true -> 0.0
     end
-  end
-
-  defp attribute_atom_value(attributes, name) do
-    atom = String.to_existing_atom(name)
-    Map.get(attributes, atom, 0.0)
-  rescue
-    ArgumentError -> 0.0
   end
 
   defp color_channel(color, idx, default \\ 0)
@@ -704,7 +677,6 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   end
 
   defp rest_coeff("f_rest_" <> idx, rest), do: Enum.at(rest, String.to_integer(idx), 0.0)
-  defp rest_coeff(_, _), do: 0.0
 
   defp sh_rest_flat(nil), do: []
   defp sh_rest_flat([_dc | rest]), do: List.flatten(rest)
@@ -713,20 +685,11 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp ascii_value(v) when is_integer(v), do: Integer.to_string(v)
   defp ascii_value(v) when is_float(v), do: :erlang.float_to_binary(v, [:short])
 
+  # Like type_name/1, encode only packs float and uchar values; decode's
+  # unpack/3 still handles the full range of PLY scalar property types.
   defp pack(:uchar, v, _), do: <<trunc(v)::unsigned-integer-8>>
-  defp pack(:char, v, _), do: <<trunc(v)::signed-integer-8>>
-  defp pack(:ushort, v, :binary_le), do: <<trunc(v)::little-unsigned-integer-16>>
-  defp pack(:ushort, v, :binary_be), do: <<trunc(v)::big-unsigned-integer-16>>
-  defp pack(:short, v, :binary_le), do: <<trunc(v)::little-signed-integer-16>>
-  defp pack(:short, v, :binary_be), do: <<trunc(v)::big-signed-integer-16>>
-  defp pack(:uint, v, :binary_le), do: <<trunc(v)::little-unsigned-integer-32>>
-  defp pack(:uint, v, :binary_be), do: <<trunc(v)::big-unsigned-integer-32>>
-  defp pack(:int, v, :binary_le), do: <<trunc(v)::little-signed-integer-32>>
-  defp pack(:int, v, :binary_be), do: <<trunc(v)::big-signed-integer-32>>
   defp pack(:float, v, :binary_le), do: <<v * 1.0::little-float-32>>
   defp pack(:float, v, :binary_be), do: <<v * 1.0::big-float-32>>
-  defp pack(:double, v, :binary_le), do: <<v * 1.0::little-float-64>>
-  defp pack(:double, v, :binary_be), do: <<v * 1.0::big-float-64>>
 
   # --- Decode ---------------------------------------------------------------
 
@@ -742,6 +705,25 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     else
       :point_cloud
     end
+  end
+
+  defp decode_parsed_body(:point_cloud, body, parsed) do
+    with {:ok, points} <- decode_vertices(body, parsed) do
+      {:ok, PointCloud.new(points, metadata: ply_metadata(parsed))}
+    end
+  end
+
+  defp decode_parsed_body(:gaussian_cloud, body, parsed) do
+    with {:ok, gaussians} <- decode_gaussians(body, parsed) do
+      {:ok, GaussianCloud.new(gaussians, metadata: ply_metadata(parsed))}
+    end
+  end
+
+  defp ply_metadata(parsed) do
+    Metadata.new(
+      comments: parsed.comments,
+      entries: %{"ply_format" => to_string(parsed.format)}
+    )
   end
 
   defp decode_vertices(body, %{format: :ascii, count: count, properties: props}) do
@@ -793,7 +775,8 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     with {:ok, points} <- decode_vertices(body, parsed) do
       gaussians =
         Enum.map(points, fn %Point{} = p ->
-          attrs = stringify_attrs(p.attributes)
+          # Point.new/4 normalizes attribute keys to strings.
+          attrs = p.attributes
 
           Gaussian.new({p.x, p.y, p.z},
             color: {
@@ -820,13 +803,6 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
       {:ok, gaussians}
     end
-  end
-
-  defp stringify_attrs(attrs) do
-    Map.new(attrs, fn
-      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
-      {k, v} when is_binary(k) -> {k, v}
-    end)
   end
 
   defp extract_sh(attrs) do

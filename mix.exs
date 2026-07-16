@@ -19,7 +19,7 @@ defmodule ExCodecs.MixProject do
       test_coverage: [
         tool: ExCoveralls,
         ignore_modules: [ExCodecs.Native],
-        threshold: 84
+        threshold: 95
       ],
       preferred_cli_env: [
         coveralls: :test,
@@ -85,6 +85,9 @@ defmodule ExCodecs.MixProject do
         "native/ex_codecs_native/Cargo.toml",
         "native/ex_codecs_native/Cargo.lock",
         "priv",
+        "guides",
+        "livebooks",
+        "docs",
         "checksum-*.exs",
         "mix.exs",
         "README.md",
@@ -98,7 +101,15 @@ defmodule ExCodecs.MixProject do
       main: "ExCodecs",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: Path.wildcard("guides/**/*.md") ++ Path.wildcard("livebooks/**/*.livemd")
+      extras:
+        Path.wildcard("guides/**/*.md") ++
+          Path.wildcard("livebooks/**/*.livemd") ++
+          ["docs/spatial_formats.md"],
+      groups_for_extras: [
+        Guides: ~r"guides/",
+        Livebooks: ~r"livebooks/",
+        "Architecture & formats": ~r"docs/"
+      ]
     ]
   end
 

@@ -60,13 +60,15 @@ pub fn blosc2_compress<'a>(
         return err(env, atoms::invalid_data());
     }
 
-    let mut cparams = CParams::default();
-    cparams.compcode = compcode;
-    cparams.clevel = clevel;
-    cparams.typesize = typesize;
-    cparams.nthreads = 1;
-    cparams.filters = [0, 0, 0, 0, 0, filter];
-    cparams.filters_meta = [0; 6];
+    let cparams = CParams {
+        compcode,
+        clevel,
+        typesize,
+        nthreads: 1,
+        filters: [0, 0, 0, 0, 0, filter],
+        filters_meta: [0; 6],
+        ..Default::default()
+    };
 
     let ctx = match blosc2_create_cctx(cparams) {
         Ok(ctx) => ctx,
@@ -91,12 +93,14 @@ pub fn blosc2_compress<'a>(
         // Destination too small — retry with a larger buffer.
         let destsize2 = ((src.len() * 2) + BLOSC2_MAX_OVERHEAD).max(BLOSC2_MAX_OVERHEAD) as i32;
         let mut dest2 = vec![0u8; destsize2 as usize];
-        let mut cparams2 = CParams::default();
-        cparams2.compcode = compcode;
-        cparams2.clevel = clevel;
-        cparams2.typesize = typesize;
-        cparams2.nthreads = 1;
-        cparams2.filters = [0, 0, 0, 0, 0, filter];
+        let cparams2 = CParams {
+            compcode,
+            clevel,
+            typesize,
+            nthreads: 1,
+            filters: [0, 0, 0, 0, 0, filter],
+            ..Default::default()
+        };
         let Ok(ctx2) = blosc2_create_cctx(cparams2) else {
             return err(env, atoms::compression_failed());
         };
@@ -114,20 +118,22 @@ pub fn blosc2_compress<'a>(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-pub fn blosc2_decompress<'a>(env: Env<'a>, data: Binary) -> Term<'a> {
+pub fn blosc2_decompress<'a>(env: Env<'a>, data: Binary, max_output_size: u64) -> Term<'a> {
     if data.len() < 16 {
         return err(env, atoms::invalid_data());
     }
 
     // nbytes at offset 4 (little-endian int32) in the Blosc chunk header.
     let nbytes = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
-    // Cap single-chunk decompress to 1 GiB.
-    if nbytes > (1usize << 30) {
-        return err(env, atoms::invalid_data());
+    // Cap single-chunk decompress to 1 GiB, and to the caller-supplied limit.
+    if nbytes > (1usize << 30) || !crate::util::output_within_limit(nbytes, max_output_size) {
+        return err(env, atoms::output_limit_exceeded());
     }
 
-    let mut dparams = DParams::default();
-    dparams.nthreads = 1;
+    let dparams = DParams {
+        nthreads: 1,
+        ..Default::default()
+    };
     let ctx = match blosc2_create_dctx(dparams) {
         Ok(ctx) => ctx,
         Err(_) => return err(env, atoms::decompression_failed()),

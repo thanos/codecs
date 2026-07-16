@@ -18,6 +18,11 @@ defmodule ExCodecs.NIFTest do
                NIF.wrap(:lz4, {:error, :decompression_failed})
     end
 
+    test "wraps output_limit_exceeded error" do
+      assert {:error, %ExCodecs.Error{reason: :output_limit_exceeded, codec: :zstd}} =
+               NIF.wrap(:zstd, {:error, :output_limit_exceeded})
+    end
+
     test "wraps invalid_data error" do
       assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :blosc2}} =
                NIF.wrap(:blosc2, {:error, :invalid_data})

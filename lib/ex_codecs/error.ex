@@ -31,6 +31,7 @@ defmodule ExCodecs.Error do
   | `:nif_not_loaded` | NIF library missing |
   | `:io_error` | File read/write failure |
   | `:truncated_input` | Incomplete binary |
+  | `:output_limit_exceeded` | Decompress would exceed `max_output_size` |
 
   ## As exception
 
@@ -50,6 +51,7 @@ defmodule ExCodecs.Error do
     * `:nif_not_loaded` — native library could not be loaded
     * `:io_error` — file operation failed
     * `:truncated_input` — encoded input ended before a complete value
+    * `:output_limit_exceeded` — decompress output would exceed `max_output_size`
 
   ## Example
 
@@ -67,6 +69,7 @@ defmodule ExCodecs.Error do
           | :nif_not_loaded
           | :io_error
           | :truncated_input
+          | :output_limit_exceeded
 
   @typedoc """
   Structured ExCodecs error and exception.
@@ -173,6 +176,10 @@ defmodule ExCodecs.Error do
   defp default_message(:nif_not_loaded), do: "The native NIF library is not loaded"
   defp default_message(:io_error), do: "An I/O error occurred"
   defp default_message(:truncated_input), do: "The input was truncated or incomplete"
+
+  defp default_message(:output_limit_exceeded),
+    do: "Decompressed output exceeded the configured max_output_size"
+
   defp default_message(reason), do: "Error: #{reason}"
 
   @impl true

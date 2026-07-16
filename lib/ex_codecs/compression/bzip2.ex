@@ -5,6 +5,12 @@ defmodule ExCodecs.Compression.Bzip2 do
   ## Options
 
     * `:block_size` — 1..9 (default 9)
+    * `:max_output_size` — Maximum allowed decompressed size in bytes
+      (default: 256 MiB)
+
+  ## Security
+
+  Do not decompress untrusted inputs without a tight `:max_output_size`.
 
   ## Examples
 
@@ -162,8 +168,10 @@ defmodule ExCodecs.Compression.Bzip2 do
       :decompression_failed
   """
   @impl true
-  def decode(data, _opts) when is_binary(data) do
-    ExCodecs.NIF.safe_call(:bzip2, fn -> ExCodecs.Native.bzip2_decompress(data) end)
+  def decode(data, opts) when is_binary(data) and is_list(opts) do
+    with {:ok, max} <- ExCodecs.NIF.max_output_size(opts) do
+      ExCodecs.NIF.safe_call(:bzip2, fn -> ExCodecs.Native.bzip2_decompress(data, max) end)
+    end
   end
 
   def decode(_data, _opts), do: {:error, ExCodecs.Error.new(:invalid_data, codec: :bzip2)}

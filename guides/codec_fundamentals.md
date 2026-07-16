@@ -100,9 +100,9 @@ def __codec_info__ do
     category: :compression,
     module: __MODULE__,
     native?: true,
-    streaming?: true,
+    streaming?: false,
     configurable?: true,
-    version: "1.5.6"
+    version: "structured-zstd-0.0.48"
   }
 end
 ```
@@ -115,7 +115,7 @@ The `%ExCodecs.Codec{}` struct contains:
 | `category`        | `atom()`          | Category (e.g., `:compression`)                   |
 | `module`          | `module() \| nil` | Implementing module, or `nil` if unavailable      |
 | `native?`         | `boolean()`       | Whether a native NIF implementation exists         |
-| `streaming?`      | `boolean()`       | Whether the codec supports streaming operation     |
+| `streaming?`      | `boolean()`       | Whether an incremental encode/decode API is exposed |
 | `configurable?`   | `boolean()`       | Whether the codec accepts configuration options    |
 | `version`         | `String.t() \| nil` | Library version string                          |
 

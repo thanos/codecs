@@ -4,12 +4,69 @@ defmodule ExCodecs.SpatialTest do
   alias ExCodecs.Spatial
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
+  defmodule CatalogSpatialCodec do
+    def encode(%PointCloud{}, []), do: {:ok, "catalog-spatial"}
+    def decode("catalog-spatial", []), do: {:ok, PointCloud.new([])}
+  end
+
   describe "available_formats/0" do
     test "lists supported formats" do
+      assert Spatial.available_formats() == [:ply, :spatial_binary, :gsplat]
       assert :ply in Spatial.available_formats()
       assert :gsplat in Spatial.available_formats()
       assert Spatial.supports?(:ply)
       refute Spatial.supports?(:sog)
+    end
+
+    test "spatial formats participate in the shared catalog" do
+      assert :ply in ExCodecs.available_codecs()
+      assert ExCodecs.available_codecs(:spatial) == [:gsplat, :ply, :spatial_binary]
+      assert ExCodecs.supports?(:ply)
+
+      assert {:ok, info} = ExCodecs.codec_info(:ply)
+      assert info.category == :spatial
+      assert info.interface == :spatial
+    end
+
+    test "registered spatial extensions are discovered and dispatched" do
+      format = :"spatial_test_#{System.unique_integer([:positive])}"
+
+      on_exit(fn ->
+        ExCodecs.CodecRegistry.unregister(format)
+      end)
+
+      assert :ok =
+               ExCodecs.CodecRegistry.register(
+                 format,
+                 CatalogSpatialCodec,
+                 :spatial,
+                 :spatial
+               )
+
+      assert format in Spatial.available_formats()
+      assert Spatial.supports?(format)
+
+      assert {:ok, "catalog-spatial"} =
+               Spatial.encode(PointCloud.new([]), format: format)
+
+      assert {:ok, %PointCloud{points: []}} =
+               Spatial.decode("catalog-spatial", format: format)
+    end
+
+    test "an unavailable spatial catalog entry returns codec_unavailable" do
+      format = :"unavailable_spatial_test_#{System.unique_integer([:positive])}"
+
+      on_exit(fn ->
+        ExCodecs.CodecRegistry.unregister(format)
+      end)
+
+      assert :ok =
+               ExCodecs.CodecRegistry.register_unavailable(format, :spatial, :spatial)
+
+      refute Spatial.supports?(format)
+
+      assert {:error, %ExCodecs.Error{reason: :codec_unavailable, codec: ^format}} =
+               Spatial.decode("payload", format: format)
     end
   end
 
@@ -34,6 +91,12 @@ defmodule ExCodecs.SpatialTest do
 
       assert {:ok, decoded} = Spatial.decode(bin, format: :ply)
       assert hd(decoded.points).color == {9, 8, 7}
+
+      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
+               ExCodecs.encode(:ply, bin)
+
+      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
+               ExCodecs.decode(:ply, bin)
     end
 
     test "stream decode and encode" do

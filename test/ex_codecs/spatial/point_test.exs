@@ -18,4 +18,9 @@ defmodule ExCodecs.Spatial.PointTest do
     assert Point.has_normal?(p)
     assert p.attributes["intensity"] == 0.5
   end
+
+  test "normalizes atom attribute keys to strings" do
+    p = Point.new(0, 0, 0, attributes: %{:intensity => 0.25, "label" => "a"})
+    assert p.attributes == %{"intensity" => 0.25, "label" => "a"}
+  end
 end

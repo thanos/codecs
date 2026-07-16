@@ -1,6 +1,26 @@
 defmodule ExCodecs.NIF do
   @moduledoc false
 
+  # Default decompress ceiling: 256 MiB. Override with `max_output_size:`.
+  @default_max_output_size 268_435_456
+
+  @doc false
+  def default_max_output_size, do: @default_max_output_size
+
+  @doc false
+  def max_output_size(opts) when is_list(opts) do
+    case Keyword.get(opts, :max_output_size, @default_max_output_size) do
+      n when is_integer(n) and n > 0 ->
+        {:ok, n}
+
+      _ ->
+        {:error,
+         ExCodecs.Error.new(:invalid_options,
+           message: "max_output_size must be a positive integer (bytes)"
+         )}
+    end
+  end
+
   @doc """
   Wraps raw NIF error tuples into ExCodecs.Error structs.
 
@@ -16,6 +36,17 @@ defmodule ExCodecs.NIF do
 
   def wrap(codec, {:error, :decompression_failed}),
     do: {:error, ExCodecs.Error.new(:decompression_failed, codec: codec)}
+
+  def wrap(codec, {:error, :output_limit_exceeded}),
+    do:
+      {:error,
+       ExCodecs.Error.new(:output_limit_exceeded,
+         codec: codec,
+         message:
+           "Decompressed output exceeded max_output_size " <>
+             "(default #{@default_max_output_size} bytes). " <>
+             "Pass a larger max_output_size: for trusted inputs."
+       )}
 
   def wrap(codec, {:error, :invalid_data}),
     do: {:error, ExCodecs.Error.new(:invalid_data, codec: codec)}

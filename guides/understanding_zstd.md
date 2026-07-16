@@ -1,6 +1,6 @@
 # Understanding Zstd
 
-Zstandard (Zstd) is the default codec for most use cases in ExCodecs. This guide provides a deep dive into how Zstd works, its compression levels, dictionary compression, and how to get the most out of it.
+Zstandard (Zstd) is the default codec for most use cases in ExCodecs. This guide provides a deep dive into how Zstd works, its compression levels, format capabilities, and the subset exposed by ExCodecs.
 
 ## Overview
 
@@ -78,26 +78,31 @@ General recommendations:
 - **Levels 10-14**: Archival, batch processing, cold storage.
 - **Levels 15-22**: Extreme ratio scenarios. Only use if compression time is irrelevant.
 
-## Dictionary Compression
+## Dictionary Compression (not exposed)
 
-Zstd supports **dictionary compression** for improving ratios on small data. Normally, compression algorithms need a large enough input to build an effective dictionary. With a pre-trained dictionary, even small inputs (a few hundred bytes) can achieve significant compression.
+The Zstd format supports dictionary compression for small, structurally similar
+payloads, but **ExCodecs does not currently expose dictionary training,
+dictionary compression, or dictionary decompression options**.
 
-### How It Works
+At the format level, dictionary workflows normally:
 
 1. **Train** a dictionary on a representative sample of your data.
 2. **Compress** each small payload using the trained dictionary.
 3. **Decompress** using the same dictionary.
 
-The dictionary is typically 8-112 KB and is stored alongside or referenced by the compressed data. It captures the common patterns of your data domain, so small payloads benefit from the dictionary's knowledge.
+The dictionary is typically stored alongside or referenced by compressed data.
+Both encoder and decoder must use the same dictionary.
 
-### When to Use Dictionaries
+Potential future use cases include:
 
 - Small messages (under 100 KB) that share common structure.
 - JSON or protocol buffers with repeated schemas.
 - Log entries or metrics that follow a pattern.
 - When you control both the compression and decompression side.
 
-ExCodecs currently provides block-level compression and decompression. Dictionary support requires managing the dictionary bytes externally and passing them through a custom Codec module that wraps `ExCodecs.Native` calls with dictionary parameters.
+The current native API has no dictionary parameters, so a custom codec cannot
+obtain dictionary support merely by forwarding options to `ExCodecs.Native`.
+Use another Zstd implementation if dictionaries are required today.
 
 ## Streaming
 
@@ -178,4 +183,5 @@ Zstd is strictly superior to GZIP/Deflate on both ratio and speed. It is the rec
 
 5. **Watch memory at high levels.** Large payloads require room for input and output buffers (block API).
 
-6. **Consider dictionary compression for small payloads.** If you are compressing many small messages with shared structure, a trained dictionary can double or triple compression ratios.
+6. **Do not pass dictionary options.** They are not implemented by ExCodecs.
+   Evaluate another Zstd implementation when dictionary compression is required.

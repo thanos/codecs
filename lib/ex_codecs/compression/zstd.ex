@@ -2,15 +2,20 @@ defmodule ExCodecs.Compression.Zstd do
   @moduledoc """
   Zstandard (Zstd) compression codec.
 
-  Zstd is a fast compression algorithm providing high compression ratios.
-  It was developed by Yann Collet at Facebook and offers configurable
-  compression levels from 1 (fastest) to 22 (smallest).
+  Pure-Rust backend via `structured-zstd` (no C libzstd). Compression levels
+  `1`–`22` are passed through to the encoder. Ratios and exact bytes may differ
+  from reference C Zstd at the same numeric level.
 
   ## Options
 
-    * `:level` — Compression level, 1-22 (default: 3). The pure-Rust backend
-      (`ruzstd`) currently maps all levels to a fast profile; higher values are
-      accepted for API stability and may gain finer control in future releases.
+    * `:level` — Compression level, 1-22 (default: 3).
+    * `:max_output_size` — Maximum allowed decompressed size in bytes
+      (default: 256 MiB). Rejects bombs that would expand beyond the limit.
+
+  ## Security
+
+  Do not decompress **untrusted** inputs without a tight `:max_output_size`.
+  A small malicious frame can expand to a large allocation.
 
   ## Performance Characteristics
 
@@ -50,7 +55,7 @@ defmodule ExCodecs.Compression.Zstd do
     * `native?: true` because compression runs in a NIF
     * `streaming?: false` because only complete frames are supported
     * `configurable?: true` because `encode/2` accepts `:level`
-    * `version: "ruzstd-0.8"` for the backend implementation
+    * `version: "structured-zstd-0.0.48"` for the backend implementation
 
   ## Raises / Exceptions
 
@@ -66,7 +71,7 @@ defmodule ExCodecs.Compression.Zstd do
         native?: true,
         streaming?: false,
         configurable?: true,
-        version: "ruzstd-0.8"
+        version: "structured-zstd-0.0.48"
       }
   """
   def __codec_info__ do
@@ -81,7 +86,7 @@ defmodule ExCodecs.Compression.Zstd do
     }
   end
 
-  defp zstd_version, do: "ruzstd-0.8"
+  defp zstd_version, do: "structured-zstd-0.0.48"
 
   @doc """
   Compresses a binary with pure-Rust Zstd.
@@ -140,13 +145,18 @@ defmodule ExCodecs.Compression.Zstd do
   ## Arguments
 
     * `data` (`binary()`) — a complete Zstandard frame
-    * `opts` (`keyword()`) — currently ignored, but must be a list; pass `[]`
+    * `opts` (`keyword()`) — optional `:max_output_size` (positive integer
+      bytes, default 256 MiB)
 
   ## Returns
 
     * `{:ok, decompressed :: binary()}` on success
     * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when `data` is not a
       binary, `opts` is not a list, or the NIF raises an argument error
+    * `{:error, %ExCodecs.Error{reason: :invalid_options}}` when
+      `:max_output_size` is not a positive integer
+    * `{:error, %ExCodecs.Error{reason: :output_limit_exceeded}}` when the
+      decompressed size would exceed `:max_output_size`
     * `{:error, %ExCodecs.Error{reason: :decompression_failed}}` when `data`
       is corrupt, truncated, or not a Zstandard frame
     * `{:error, %ExCodecs.Error{reason: :nif_not_loaded}}` when the native
@@ -171,7 +181,9 @@ defmodule ExCodecs.Compression.Zstd do
   """
   @impl true
   def decode(data, opts) when is_binary(data) and is_list(opts) do
-    ExCodecs.NIF.safe_call(:zstd, fn -> ExCodecs.Native.zstd_decompress(data) end)
+    with {:ok, max} <- ExCodecs.NIF.max_output_size(opts) do
+      ExCodecs.NIF.safe_call(:zstd, fn -> ExCodecs.Native.zstd_decompress(data, max) end)
+    end
   end
 
   def decode(_data, _opts), do: {:error, ExCodecs.Error.new(:invalid_data, codec: :zstd)}

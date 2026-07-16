@@ -2,8 +2,8 @@ defmodule ExCodecs.Application do
   @moduledoc """
   OTP Application callback module for ExCodecs.
 
-  Starts the `ExCodecs.CodecRegistry` and registers all built-in codecs
-  during application startup.
+  Starts the shared `ExCodecs.CodecRegistry` catalog and registers all built-in
+  binary and spatial codecs during application startup.
   """
 
   use Application
@@ -13,7 +13,7 @@ defmodule ExCodecs.Application do
   Starts the ExCodecs supervision tree.
 
   This callback starts `ExCodecs.CodecRegistry`, registers every built-in
-  compression codec, and supervises the registry with a `:one_for_one`
+  codec entry, and supervises the registry with a `:one_for_one`
   strategy. It is invoked by OTP when the `:ex_codecs` application starts;
   application code should normally use `Application.ensure_all_started/1`
   instead of calling this function directly.
@@ -86,16 +86,22 @@ defmodule ExCodecs.Application do
   @doc false
   def register_all_codecs do
     codecs = [
-      {:zstd, ExCodecs.Compression.Zstd, :compression},
-      {:lz4, ExCodecs.Compression.Lz4, :compression},
-      {:snappy, ExCodecs.Compression.Snappy, :compression},
-      {:bzip2, ExCodecs.Compression.Bzip2, :compression},
-      {:blosc2, ExCodecs.Compression.Blosc2, :compression}
+      {:zstd, ExCodecs.Compression.Zstd, :compression, :binary, []},
+      {:lz4, ExCodecs.Compression.Lz4, :compression, :binary, []},
+      {:snappy, ExCodecs.Compression.Snappy, :compression, :binary, []},
+      {:bzip2, ExCodecs.Compression.Bzip2, :compression, :binary, []},
+      {:blosc2, ExCodecs.Compression.Blosc2, :compression, :binary, []},
+      {:ply, ExCodecs.Spatial.Codec.PLY, :spatial, :spatial,
+       [native?: false, streaming?: false, configurable?: true, version: "PLY 1.0"]},
+      {:spatial_binary, ExCodecs.Spatial.Codec.Binary, :spatial, :spatial,
+       [native?: false, streaming?: false, configurable?: false, version: "EXCP 1"]},
+      {:gsplat, ExCodecs.Spatial.Codec.Gsplat, :spatial, :spatial,
+       [native?: false, streaming?: false, configurable?: false, version: "GSPL 1"]}
     ]
 
     nif_ok? = ExCodecs.Native.nif_loaded?()
 
-    for {name, module, category} <- codecs do
+    for {name, module, category, interface, metadata} <- codecs do
       native? =
         function_exported?(module, :__codec_info__, 0) and
           match?(%{native?: true}, module.__codec_info__())
@@ -105,9 +111,9 @@ defmodule ExCodecs.Application do
           function_exported?(module, :decode, 2)
 
       if loadable? and (not native? or nif_ok?) do
-        ExCodecs.CodecRegistry.register(name, module, category)
+        ExCodecs.CodecRegistry.register(name, module, category, interface, metadata)
       else
-        ExCodecs.CodecRegistry.register_unavailable(name, category)
+        ExCodecs.CodecRegistry.register_unavailable(name, category, interface)
       end
     end
 

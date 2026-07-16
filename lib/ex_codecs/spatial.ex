@@ -1,10 +1,11 @@
 defmodule ExCodecs.Spatial do
   @moduledoc """
-  Spatial category module — point clouds and Gaussian splats.
+  Spatial category API for point clouds and Gaussian splats.
 
-  Namespace for domain types and formats. The framework’s primary
-  `ExCodecs.encode/3` / `decode/3` stay **codec atom + binary** only; this
-  module is not a second competing public protocol.
+  ExCodecs is one codec framework with entry points specialized by data shape.
+  Binary→binary registry codecs use `ExCodecs.encode/3` / `decode/3`; spatial
+  codecs map the domain structs below to and from interchange formats through
+  this module.
 
   ## Domain types
 
@@ -26,7 +27,9 @@ defmodule ExCodecs.Spatial do
   | `:spatial_binary` | `ExCodecs.Spatial.Codec.Binary` | PointCloud (`EXCP`) |
   | `:gsplat` | `ExCodecs.Spatial.Codec.Gsplat` | GaussianCloud (`GSPL`) |
 
-  Formats are **not** in `ExCodecs.available_codecs/0`.
+  Spatial formats are registered in the shared codec catalog. Discover all
+  entries with `ExCodecs.available_codecs/0`, or only this category with
+  `available_formats/0`.
 
   ## Quick start
 
@@ -44,13 +47,13 @@ defmodule ExCodecs.Spatial do
   ## Streaming note
 
   `stream_decode` / `stream_encode` currently materialize full payloads, then
-  enumerate. Prefer `source: :file` when the argument is a path.
+  enumerate. Prefer `source: :file` when the argument is a path, or
+  `source: :binary` for payloads. See `docs/spatial_formats.md` for `:auto`
+  path heuristics and wire-format layouts.
   """
 
-  alias ExCodecs.Error
+  alias ExCodecs.{CodecRegistry, Error}
   alias ExCodecs.Spatial.{GaussianCloud, PointCloud}
-  alias ExCodecs.Spatial.Codec.{Binary, Gsplat, PLY}
-
   @formats [:ply, :spatial_binary, :gsplat]
 
   @doc """
@@ -76,7 +79,11 @@ defmodule ExCodecs.Spatial do
       [:ply, :spatial_binary, :gsplat]
   """
   @spec available_formats() :: [atom()]
-  def available_formats, do: @formats
+  def available_formats do
+    available = CodecRegistry.available_codecs(:spatial)
+    preferred = Enum.filter(@formats, &(&1 in available))
+    preferred ++ Enum.reject(available, &(&1 in @formats))
+  end
 
   @doc """
   Tests whether an atom names a supported spatial format.
@@ -103,7 +110,12 @@ defmodule ExCodecs.Spatial do
       false
   """
   @spec supports?(atom()) :: boolean()
-  def supports?(format) when is_atom(format), do: format in @formats
+  def supports?(format) when is_atom(format) do
+    case CodecRegistry.codec_info(format) do
+      {:ok, %{category: :spatial, interface: :spatial, module: module}} -> module != nil
+      _ -> false
+    end
+  end
 
   @doc """
   Encodes a point cloud or Gaussian cloud in a selected spatial format.
@@ -156,44 +168,32 @@ defmodule ExCodecs.Spatial do
   def encode(%PointCloud{} = data, opts) do
     {format, codec_opts} = Keyword.pop(opts, :format, :ply)
 
-    case format do
-      :ply ->
-        PLY.encode(data, codec_opts)
-
-      :spatial_binary ->
-        Binary.encode(data, codec_opts)
-
-      :gsplat ->
-        {:error,
-         Error.new(:invalid_data,
-           codec: :gsplat,
-           message: "GSPLAT format requires a GaussianCloud"
-         )}
-
-      other ->
-        {:error, Error.new(:unsupported_codec, codec: other)}
+    if format == :gsplat do
+      {:error,
+       Error.new(:invalid_data,
+         codec: :gsplat,
+         message: "GSPLAT format requires a GaussianCloud"
+       )}
+    else
+      with {:ok, module} <- spatial_codec(format) do
+        module.encode(data, codec_opts)
+      end
     end
   end
 
   def encode(%GaussianCloud{} = data, opts) do
     {format, codec_opts} = Keyword.pop(opts, :format, :ply)
 
-    case format do
-      :ply ->
-        PLY.encode(data, codec_opts)
-
-      :gsplat ->
-        Gsplat.encode(data, codec_opts)
-
-      :spatial_binary ->
-        {:error,
-         Error.new(:invalid_data,
-           codec: :spatial_binary,
-           message: "spatial_binary format requires a PointCloud"
-         )}
-
-      other ->
-        {:error, Error.new(:unsupported_codec, codec: other)}
+    if format == :spatial_binary do
+      {:error,
+       Error.new(:invalid_data,
+         codec: :spatial_binary,
+         message: "spatial_binary format requires a PointCloud"
+       )}
+    else
+      with {:ok, module} <- spatial_codec(format) do
+        module.encode(data, codec_opts)
+      end
     end
   end
 
@@ -249,16 +249,26 @@ defmodule ExCodecs.Spatial do
   def decode(data, opts) when is_binary(data) do
     {format, codec_opts} = Keyword.pop(opts, :format, :ply)
 
-    case format do
-      :ply -> PLY.decode(data, codec_opts)
-      :spatial_binary -> Binary.decode(data, codec_opts)
-      :gsplat -> Gsplat.decode(data, codec_opts)
-      other -> {:error, Error.new(:unsupported_codec, codec: other)}
+    with {:ok, module} <- spatial_codec(format) do
+      module.decode(data, codec_opts)
     end
   end
 
   def decode(_, _) do
     {:error, Error.new(:invalid_data, message: "Spatial decode expects a binary")}
+  end
+
+  defp spatial_codec(format) do
+    case CodecRegistry.lookup(format) do
+      {:ok, {module, :spatial, %{interface: :spatial}}} when module != nil ->
+        {:ok, module}
+
+      {:ok, {nil, :spatial, %{interface: :spatial}}} ->
+        {:error, Error.new(:codec_unavailable, codec: format)}
+
+      _ ->
+        {:error, Error.new(:unsupported_codec, codec: format)}
+    end
   end
 
   @doc """

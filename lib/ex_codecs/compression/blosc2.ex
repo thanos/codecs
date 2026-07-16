@@ -28,6 +28,12 @@ defmodule ExCodecs.Compression.Blosc2 do
     * `:clevel` — `0..9` (default `5`)
     * `:shuffle` — `:none` | `:byte` (default) | `:bit`
     * `:typesize` — `1..255` (default `8`)
+    * `:max_output_size` — Maximum allowed decompressed size in bytes
+      (default: 256 MiB; also hard-capped at 1 GiB per chunk)
+
+  ## Security
+
+  Do not decompress untrusted inputs without a tight `:max_output_size`.
 
   ### Snappy
 
@@ -231,8 +237,10 @@ defmodule ExCodecs.Compression.Blosc2 do
       :invalid_data
   """
   @impl true
-  def decode(data, _opts) when is_binary(data) do
-    ExCodecs.NIF.safe_call(:blosc2, fn -> ExCodecs.Native.blosc2_decompress(data) end)
+  def decode(data, opts) when is_binary(data) and is_list(opts) do
+    with {:ok, max} <- ExCodecs.NIF.max_output_size(opts) do
+      ExCodecs.NIF.safe_call(:blosc2, fn -> ExCodecs.Native.blosc2_decompress(data, max) end)
+    end
   end
 
   def decode(_data, _opts) do

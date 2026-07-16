@@ -10,4 +10,5 @@ atoms! {
     compression_failed,
     decompression_failed,
     nif_not_loaded,
+    output_limit_exceeded,
 }

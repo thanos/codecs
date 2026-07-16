@@ -12,8 +12,9 @@ defmodule ExCodecs.Spatial.Point do
     * `:normal` — `normal() | nil`; defaults to `nil`. Components follow the
       same axis convention as the coordinates and are normally unit length,
       though this module does not normalize them.
-    * `:attributes` — `attributes()`; defaults to `%{}`. Keys are atoms or
-      strings and values are numbers or binaries.
+    * `:attributes` — `attributes()`; defaults to `%{}`. Keys are **strings**
+      (atoms passed to `new/4` are converted via `to_string/1`). Values are
+      numbers or binaries.
 
   ## Example
 
@@ -47,11 +48,11 @@ defmodule ExCodecs.Spatial.Point do
   """
   @type normal :: {float(), float(), float()}
   @typedoc """
-  User attributes keyed by atoms or strings, with numeric or binary values.
-  For example, `%{"intensity" => 0.82, :classification => 2}` stores two
-  application-defined point attributes.
+  User attributes keyed by strings, with numeric or binary values.
+  For example, `%{"intensity" => 0.82, "classification" => 2}`.
+  Atom keys passed to `new/4` are normalized to strings.
   """
-  @type attributes :: %{optional(atom() | String.t()) => number() | binary()}
+  @type attributes :: %{optional(String.t()) => number() | binary()}
 
   @typedoc """
   A spatial point. See the module documentation for every field, its default,
@@ -83,7 +84,8 @@ defmodule ExCodecs.Spatial.Point do
     * `opts`:
       * `:color` — `rgb` or `rgba` tuple, or `nil`
       * `:normal` — `{nx, ny, nz}` or `nil`
-      * `:attributes` — map (default `%{}`)
+      * `:attributes` — map of string keys (default `%{}`); atom keys are
+        stringified
 
   ## Returns
 
@@ -112,8 +114,15 @@ defmodule ExCodecs.Spatial.Point do
       z: z * 1.0,
       color: Keyword.get(opts, :color),
       normal: Keyword.get(opts, :normal),
-      attributes: Keyword.get(opts, :attributes, %{})
+      attributes: normalize_attributes(Keyword.get(opts, :attributes, %{}))
     }
+  end
+
+  defp normalize_attributes(attrs) when is_map(attrs) do
+    Map.new(attrs, fn
+      {k, v} when is_binary(k) -> {k, v}
+      {k, v} -> {to_string(k), v}
+    end)
   end
 
   @doc """

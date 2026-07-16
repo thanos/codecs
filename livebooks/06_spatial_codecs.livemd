@@ -1,0 +1,210 @@
+# Spatial Codecs: Point Clouds and Gaussian Splats
+
+```elixir
+local_path = Path.join(__DIR__, "../mix.exs")
+
+ex_codecs_dep =
+  if File.exists?(local_path) do
+    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
+  else
+    [{:ex_codecs, "~> 0.2.0"}]
+  end
+
+config =
+  if File.exists?(local_path) do
+    [rustler_precompiled: [force_build: [ex_codecs: true]]]
+  else
+    []
+  end
+
+Mix.install(ex_codecs_dep, config: config)
+```
+
+## One Framework, Specialized Category APIs
+
+Compression codecs and spatial formats share discovery metadata and
+`%ExCodecs.Error{}` results. Their operation APIs differ because compression
+maps binary to binary, while spatial codecs map domain structs to formats.
+
+```elixir
+ExCodecs.available_codecs(:spatial)
+```
+
+```elixir
+for format <- ExCodecs.Spatial.available_formats() do
+  {:ok, info} = ExCodecs.codec_info(format)
+
+  %{
+    format: info.name,
+    interface: info.interface,
+    configurable?: info.configurable?,
+    version: info.version
+  }
+end
+```
+
+## Build a Point Cloud
+
+`Point.new/4` stores coordinates as floats and normalizes attribute keys to
+strings. `PointCloud.new/2` computes axis-aligned bounds by default.
+
+```elixir
+alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
+
+points = [
+  Point.new(0, 0, 0,
+    color: {255, 32, 32},
+    normal: {0.0, 0.0, 1.0},
+    attributes: %{intensity: 0.25}
+  ),
+  Point.new(1, 0, 0,
+    color: {32, 255, 32},
+    normal: {0.0, 0.0, 1.0},
+    attributes: %{intensity: 0.5}
+  ),
+  Point.new(0, 1, 0,
+    color: {32, 32, 255},
+    normal: {0.0, 0.0, 1.0},
+    attributes: %{intensity: 0.75}
+  )
+]
+
+cloud = PointCloud.new(points)
+
+%{
+  points: PointCloud.size(cloud),
+  bounds: cloud.bounds,
+  attribute_keys: cloud.points |> hd() |> Map.fetch!(:attributes) |> Map.keys()
+}
+```
+
+## PLY Interchange
+
+PLY supports ASCII and binary little-/big-endian representations. The default
+is binary little-endian.
+
+```elixir
+{:ok, ply_ascii} =
+  ExCodecs.Spatial.encode(cloud,
+    format: :ply,
+    ply_format: :ascii,
+    comments: ["created by the ExCodecs spatial Livebook"]
+  )
+
+ply_ascii
+|> String.split("\n")
+|> Enum.take(14)
+|> Enum.join("\n")
+```
+
+```elixir
+{:ok, ply_binary} = ExCodecs.Spatial.encode(cloud, format: :ply)
+{:ok, decoded_ply} = ExCodecs.Spatial.decode(ply_binary, format: :ply)
+
+%{
+  encoded_bytes: byte_size(ply_binary),
+  decoded_points: PointCloud.size(decoded_ply),
+  first_point: hd(decoded_ply.points)
+}
+```
+
+## Compact Point-Cloud Binary
+
+`:spatial_binary` uses the versioned ExCodecs point format (`EXCP`). It is
+intended for compact ExCodecs-to-ExCodecs interchange.
+
+```elixir
+{:ok, excp} = ExCodecs.Spatial.encode(cloud, format: :spatial_binary)
+{:ok, decoded_excp} = ExCodecs.Spatial.decode(excp, format: :spatial_binary)
+
+%{
+  magic: binary_part(excp, 0, 4),
+  encoded_bytes: byte_size(excp),
+  decoded_points: PointCloud.size(decoded_excp)
+}
+```
+
+## Spatial Encoding Plus Compression
+
+Spatial encoding chooses a geometry format. Compression is a separate,
+composable binary step.
+
+```elixir
+{:ok, compressed_excp} = ExCodecs.encode(:zstd, excp, level: 7)
+{:ok, restored_excp} = ExCodecs.decode(:zstd, compressed_excp)
+{:ok, restored_cloud} =
+  ExCodecs.Spatial.decode(restored_excp, format: :spatial_binary)
+
+%{
+  excp_bytes: byte_size(excp),
+  compressed_bytes: byte_size(compressed_excp),
+  round_trip_points: PointCloud.size(restored_cloud)
+}
+```
+
+## Gaussian Splats
+
+`Gaussian` uses scalar-first quaternions (`{w, x, y, z}`). `:gsplat` is the
+versioned ExCodecs Gaussian format (`GSPL`).
+
+```elixir
+gaussian_cloud =
+  GaussianCloud.new([
+    Gaussian.new({0, 0, 0},
+      scale: {0.1, 0.2, 0.1},
+      opacity: 0.9,
+      color: {1.0, 0.2, 0.1}
+    ),
+    Gaussian.new({1, 0.5, -0.25},
+      rotation: {0.9239, 0.0, 0.3827, 0.0},
+      scale: {0.25, 0.1, 0.15},
+      opacity: 0.65,
+      color: {0.1, 0.4, 1.0}
+    )
+  ])
+
+{:ok, gspl} = ExCodecs.Spatial.encode(gaussian_cloud, format: :gsplat)
+{:ok, decoded_gaussians} = ExCodecs.Spatial.decode(gspl, format: :gsplat)
+
+%{
+  magic: binary_part(gspl, 0, 4),
+  encoded_bytes: byte_size(gspl),
+  decoded_gaussians: GaussianCloud.size(decoded_gaussians)
+}
+```
+
+## Enumerable Helpers
+
+The current `stream_encode/2` and `stream_decode/2` names describe an
+enumerable-facing API. In v0.2.0 they still collect the complete enumerable or
+payload in memory; they are not incremental file I/O.
+
+```elixir
+{:ok, streamed_payload} =
+  ExCodecs.Spatial.stream_encode(points, format: :spatial_binary)
+
+streamed_points =
+  streamed_payload
+  |> ExCodecs.Spatial.stream_decode(format: :spatial_binary, source: :binary)
+  |> Enum.to_list()
+
+length(streamed_points)
+```
+
+## Category-Safe Dispatch
+
+The shared catalog does not overload the binary API with struct inputs.
+Choosing a spatial catalog entry through `ExCodecs.encode/3` returns guidance
+to use the spatial category API.
+
+```elixir
+{:error, error} = ExCodecs.encode(:ply, ply_binary)
+
+%{reason: error.reason, message: error.message}
+```
+
+## Next Steps
+
+* Read **Understanding Spatial Codecs** for schema and format trade-offs.
+* Read **Spatial Wire Formats** for the frozen EXCP and GSPL layouts.
+* Add Zstd after spatial encoding when storage or transfer size matters.
