@@ -21,6 +21,17 @@ defmodule ExCodecs.CodecRegistry do
   @table_name :ex_codecs_registry
   @registry_name __MODULE__
 
+  # Explicit override of the `use Agent`-generated child_spec/1 so it is
+  # excluded from the public-doc surface checked by DocumentationTest. The
+  # returned spec is identical to the generated default.
+  @doc false
+  def child_spec(arg) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [arg]}
+    }
+  end
+
   @doc """
   Starts the registry Agent and optional re-registration callback.
 
