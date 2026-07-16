@@ -1,8 +1,8 @@
 defmodule ExCodecs.Spatial.Codec.PLYTest do
   use ExUnit.Case, async: true
 
-  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
   alias ExCodecs.Spatial.Codec.PLY
+  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
   describe "point cloud ASCII PLY" do
     test "round-trips XYZRGB" do

@@ -1,8 +1,8 @@
 defmodule ExCodecs.Spatial.Codec.GsplatTest do
   use ExUnit.Case, async: true
 
-  alias ExCodecs.Spatial.{Gaussian, GaussianCloud}
   alias ExCodecs.Spatial.Codec.Gsplat
+  alias ExCodecs.Spatial.{Gaussian, GaussianCloud}
 
   test "round-trips Gaussians" do
     cloud =

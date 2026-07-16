@@ -2,7 +2,7 @@ defmodule ExCodecs.Spatial.CoverageTest do
   use ExUnit.Case, async: true
 
   alias ExCodecs.Spatial
-  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
+  alias ExCodecs.Spatial.{Bounds, Gaussian, GaussianCloud, Metadata, Point, PointCloud}
   alias ExCodecs.Spatial.Codec.{Binary, Gsplat, PLY}
   alias ExCodecs.Spatial.Stream, as: SpatialStream
 
@@ -200,12 +200,12 @@ defmodule ExCodecs.Spatial.CoverageTest do
 
   describe "point cloud remaining branches" do
     test "explicit bounds and mixed color detection" do
-      bounds = ExCodecs.Spatial.Bounds.new({0, 0, 0}, {1, 1, 1})
+      bounds = Bounds.new({0, 0, 0}, {1, 1, 1})
 
       cloud =
         PointCloud.new([Point.new(0, 0, 0, color: {1, 2, 3}), Point.new(1, 1, 1)],
           bounds: bounds,
-          metadata: ExCodecs.Spatial.Metadata.new(comments: ["x"])
+          metadata: Metadata.new(comments: ["x"])
         )
 
       assert cloud.bounds == bounds

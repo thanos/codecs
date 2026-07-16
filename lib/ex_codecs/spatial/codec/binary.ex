@@ -17,7 +17,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   """
 
   alias ExCodecs.Error
-  alias ExCodecs.Spatial.{Point, PointCloud, Metadata}
+  alias ExCodecs.Spatial.{Metadata, Point, PointCloud}
 
   @magic "EXCP"
   @version 1

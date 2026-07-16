@@ -16,8 +16,8 @@ defmodule ExCodecs.Spatial.Stream do
   """
 
   alias ExCodecs.Error
-  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
   alias ExCodecs.Spatial.Codec.{Binary, Gsplat, PLY}
+  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
   @doc """
   Returns an enumerable over points or Gaussians decoded from a path or binary.

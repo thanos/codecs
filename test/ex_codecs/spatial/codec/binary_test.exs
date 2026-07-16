@@ -1,8 +1,8 @@
 defmodule ExCodecs.Spatial.Codec.BinaryTest do
   use ExUnit.Case, async: true
 
-  alias ExCodecs.Spatial.{Point, PointCloud}
   alias ExCodecs.Spatial.Codec.Binary
+  alias ExCodecs.Spatial.{Point, PointCloud}
 
   test "round-trips colored points with normals" do
     cloud =

@@ -1,8 +1,8 @@
 defmodule ExCodecs.Spatial.Codec.PLYExtraTest do
   use ExUnit.Case, async: true
 
-  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
   alias ExCodecs.Spatial.Codec.PLY
+  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
   test "binary big-endian round-trip" do
     cloud = PointCloud.new([Point.new(1.5, 2.5, 3.5, color: {9, 8, 7})])

@@ -95,12 +95,10 @@ defmodule ExCodecs.Native do
   """
   @spec nif_loaded?() :: boolean()
   def nif_loaded? do
-    try do
-      is_map(codec_versions())
-    rescue
-      ErlangError -> false
-      ArgumentError -> false
-    end
+    is_map(codec_versions())
+  rescue
+    ErlangError -> false
+    ArgumentError -> false
   end
 end
 
