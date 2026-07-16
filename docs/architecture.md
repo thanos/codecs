@@ -105,7 +105,9 @@ The architecture is layered in four tiers:
 
 ## Public API
 
-The public API surface is intentionally small: five functions.
+The public API surface is intentionally small for compression (encode/decode
+plus discovery). Spatial adds `stream_encode` / `stream_decode` and format-based
+overloads on the top-level module.
 
 ```elixir
 # Encoding and decoding
@@ -329,12 +331,15 @@ The Elixir side is defined in `ExCodecs.Native`:
 
 ```elixir
 defmodule ExCodecs.Native do
-  use Rustler,
+  use RustlerPrecompiled,
     otp_app: :ex_codecs,
     crate: :ex_codecs_native,
-    mode: :release
+    # ... version, base_url, targets ...
 end
 ```
+
+The native crate is pure Rust (ruzstd, lz4_flex, snap, flate2 rust backend,
+libbz2-rs) — no C compression libraries.
 
 Each NIF function has a fallback that returns `:erlang.nif_error(:nif_not_loaded)`:
 
@@ -706,6 +711,18 @@ predictable and navigable.
 ---
 
 ## Future Categories
+
+### Spatial (implemented in 0.2.0)
+
+Spatial codecs map structured geometric types to interchange formats. They are
+pure Elixir and live under `ExCodecs.Spatial` rather than the binary-only
+`ExCodecs.Codec` behaviour used by compression.
+
+| Format            | Module                              |
+|-------------------|-------------------------------------|
+| `:ply`            | `ExCodecs.Spatial.Codec.PLY`        |
+| `:spatial_binary` | `ExCodecs.Spatial.Codec.Binary`     |
+| `:gsplat`         | `ExCodecs.Spatial.Codec.Gsplat`     |
 
 ### Hashing
 

@@ -10,9 +10,12 @@
 
 An extensible BEAM-native codec framework for Elixir.
 
-ExCodecs provides a unified API for compression, decompression, hashing, checksums,
-binary encodings, and future content-addressing codecs — all backed by Rust NIFs
-for high throughput on the BEAM.
+Primary API: `ExCodecs.encode(codec, binary, opts)` / `decode/3` (registry).
+`ExCodecs.Compression` is a naming alias; `ExCodecs.Spatial` holds domain
+types for point clouds / Gaussians (not overloads of the registry API).
+
+**Blosc2** produces C-Blosc2-compatible **chunks** only (not super-chunk /
+B2ND / `.b2frame`). Standalone `:snappy` is separate from Blosc2 `cname:`.
 
 ## Design Philosophy
 
@@ -35,7 +38,7 @@ Add `ex_codecs` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_codecs, "~> 0.1.1"}
+    {:ex_codecs, "~> 0.2.0"}
   ]
 end
 ```
@@ -48,52 +51,60 @@ mix deps.get && mix compile
 
 Precompiled NIF binaries are available for macOS (Intel and ARM64), Linux
 (x86_64 and ARM64, glibc and musl), and Windows (x86_64). They are downloaded
-automatically from the [GitHub releases](https://github.com/ex-codecs/ex_codecs/releases)
+automatically from the [GitHub releases](https://github.com/thanos/codecs/releases)
 when you run `mix deps.get`. If a precompiled artifact is not available for your
 target, ExCodecs falls back to compiling the Rust NIF from source (requires
-Rust 1.85+).
+Rust 1.85+). The native crate is **pure Rust** (no C toolchain / system
+compression libraries).
 
 ## Quick Start
 
 ```elixir
-# Compress data
+# Registry codecs (primary API — always codec atom + binary)
 {:ok, compressed} = ExCodecs.encode(:zstd, "hello world")
 {:ok, original}  = ExCodecs.decode(:zstd, compressed)
 original #=> "hello world"
 
-# Compression with options
 {:ok, compressed} = ExCodecs.encode(:zstd, my_binary, level: 9)
 {:ok, compressed} = ExCodecs.encode(:blosc2, my_binary, cname: :zstd, clevel: 5, shuffle: :byte)
 
-# Discover available codecs
+# Category alias for compression
+{:ok, compressed} = ExCodecs.Compression.compress(:lz4, data)
+{:ok, original}   = ExCodecs.Compression.decompress(:lz4, compressed)
+
+# Discovery (registered binary codecs only)
 ExCodecs.available_codecs()  #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
 ExCodecs.supports?(:zstd)    #=> true
 ExCodecs.codec_info(:zstd)   #=> {:ok, %ExCodecs.Codec{name: :zstd, category: :compression, ...}}
 
-# Convenience aliases for compression
-{:ok, compressed} = ExCodecs.Compression.compress(:lz4, data)
-{:ok, original}   = ExCodecs.Compression.decompress(:lz4, compressed)
+# Spatial category (structs ↔ formats — not registry atoms)
+alias ExCodecs.Spatial.{Point, PointCloud}
+cloud = PointCloud.new([Point.new(0.0, 0.0, 0.0, color: {255, 0, 0})])
+{:ok, ply} = ExCodecs.Spatial.encode(cloud, format: :ply)
+{:ok, cloud} = ExCodecs.Spatial.decode(ply, format: :ply)
+ExCodecs.Spatial.stream_decode(ply, format: :ply) |> Enum.to_list()
 ```
 
 ## API Overview
 
-### `encode/3`
+### Primary API (one shape)
 
 ```elixir
 {:ok, encoded} = ExCodecs.encode(:zstd, binary, level: 3)
-```
-
-Encodes (compresses) data with the given codec and options. Returns
-`{:ok, binary}` on success or `{:error, %ExCodecs.Error{}}` on failure.
-
-### `decode/3`
-
-```elixir
 {:ok, decoded} = ExCodecs.decode(:zstd, compressed)
 ```
 
-Decodes (decompresses) data with the given codec. Returns `{:ok, binary}` on
-success or `{:error, %ExCodecs.Error{}}` on failure.
+Always **codec atom + binary**. That is the original framework contract.
+
+**Helpers (not a second protocol):**
+
+- `ExCodecs.Compression.compress/3` — same as `encode/3` for compression codecs
+- `ExCodecs.Spatial` — point clouds / Gaussians (struct ↔ format; not registry atoms)
+
+### `encode/3` / `decode/3`
+
+First argument is always a **codec atom**. Returns `{:ok, binary}` or
+`{:error, %ExCodecs.Error{}}`.
 
 ### `available_codecs/0`
 
@@ -119,9 +130,9 @@ Returns `true` only if the codec is registered **and** its native NIF is loaded.
 {:ok, info} = ExCodecs.codec_info(:zstd)
 info.category       #=> :compression
 info.native?        #=> true
-info.streaming?     #=> true
+info.streaming?     #=> false  # block API only today
 info.configurable?  #=> true
-info.version        #=> approximate (e.g., "1.5.x")
+info.version        #=> backend version string
 ```
 
 Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
@@ -131,37 +142,44 @@ Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
 
 | Codec     | Category    | Configurable | Streaming | Options                                        |
 |-----------|-------------|--------------|-----------|------------------------------------------------|
-| `:zstd`   | compression | Yes           | Yes        | `level` (1-22, default 3)                     |
-| `:lz4`    | compression | No            | No         | --                                              |
+| `:zstd`   | compression | Yes           | No         | `level` (1-22, default 3; pure-Rust backend)  |
+| `:lz4`    | compression | No            | No         | -- (size-prepended `lz4_flex` blocks)         |
 | `:snappy` | compression | No            | No         | --                                              |
 | `:bzip2`  | compression | Yes           | No         | `block_size` (1-9, default 9)                 |
-| `:blosc2` | compression | Yes           | Yes        | `cname`, `clevel` (0-9, default 5), `shuffle` (`:none` / `:byte` / `:bit`, default `:byte`), `typesize` (default 8) |
+| `:blosc2` | compression | Yes           | No         | C-Blosc2 **chunk** only (not super-chunk/B2ND/`.b2frame`). `cname`: `:blosclz`/`:lz4`/`:lz4hc`/`:zstd`/`:zlib` — not `:snappy` (use codec `:snappy`). `clevel` 0-9; `shuffle`; `typesize` |
+
+### Spatial formats
+
+| Format            | Types                         | Notes                                              |
+|-------------------|-------------------------------|----------------------------------------------------|
+| `:ply`            | PointCloud / GaussianCloud    | ASCII or binary PLY; Gaussian PLY properties       |
+| `:spatial_binary` | PointCloud                    | Compact little-endian `EXCP` container             |
+| `:gsplat`         | GaussianCloud                 | Compact little-endian `GSPL` container             |
+
+See [Understanding Spatial Codecs](guides/understanding_spatial_codecs.md).
 
 ## Architecture
 
 ExCodecs is layered as follows:
 
-1. **Public API** (`ExCodecs`) -- `encode/3`, `decode/3`, `available_codecs/0`,
-   `supports?/1`, `codec_info/1`. All consumers interact with this module.
+1. **Public registry API** (`ExCodecs`) — `encode/3`, `decode/3`,
+   `available_codecs/0`, `supports?/1`, `codec_info/1` for **binary codecs**.
 
-2. **Codec Behaviour** (`ExCodecs.Codec`) -- A behaviour requiring `encode/2`
-   and `decode/2` callbacks. Each codec module implements this behaviour and
-   optionally exports `__codec_info__/0` for registry metadata.
+2. **Codec Behaviour** (`ExCodecs.Codec`) — `encode/2` / `decode/2` on binaries;
+   optional `__codec_info__/0` for registry metadata.
 
-3. **Codec Registry** (`ExCodecs.CodecRegistry`) -- An ETS-backed registry
-   populated at application startup. It maps codec atoms to their implementing
-   modules and metadata. Lookups are O(1).
+3. **Codec Registry** (`ExCodecs.CodecRegistry`) — ETS map of codec atoms →
+   modules, populated at application startup.
 
-4. **Native NIFs** (`ExCodecs.Native`) -- Rustler NIFs providing the actual
-   compression and decompression. Precompiled via `rustler_precompiled` for
-   cross-platform distribution; falls back to local compilation.
+4. **Native NIFs** (`ExCodecs.Native`) — pure-Rust compression via
+   `rustler_precompiled` (or local compile).
 
-5. **Category Modules** (`ExCodecs.Compression`) -- Convenience modules that
-   delegate to the public API with category-specific naming (e.g.,
-   `compress`/`decompress`).
+5. **Category modules** — `ExCodecs.Compression` (aliases for registry codecs)
+   and `ExCodecs.Spatial` (struct↔format codecs, not registry atoms).
 
-To add a new codec: implement `ExCodecs.Codec`, add a native NIF function,
-register the codec in `ExCodecs.Application`, and the rest follows automatically.
+To add a **registry** codec: implement `ExCodecs.Codec`, wire a NIF if needed,
+register in `ExCodecs.Application`. Spatial formats are added under
+`ExCodecs.Spatial` instead.
 
 ## Error Handling
 
@@ -193,9 +211,6 @@ ExCodecs includes benchmarking utilities via [benchee](https://github.com/benche
 ```sh
 # Run all compression benchmarks
 mix benchmarks
-
-# Run a specific benchmark file
-mix bench compression
 ```
 
 Benchmarks are defined in `bench/` and run in the `:bench` environment. Results

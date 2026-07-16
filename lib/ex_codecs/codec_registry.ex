@@ -1,25 +1,17 @@
 defmodule ExCodecs.CodecRegistry do
   @moduledoc """
-  Runtime codec registry for ExCodecs.
+  Runtime registry of **binary** codecs (ETS-backed).
 
-  The registry maintains a mapping of codec names to their implementations
-  and metadata. Codecs are registered at application startup and can be
-  queried at runtime.
+  Populated at application start (and again if this process restarts). Spatial
+  formats are **not** registered here — use `ExCodecs.Spatial`.
 
-  ## Registry Operations
+  ## Typical use
 
       iex> ExCodecs.available_codecs()
       [:blosc2, :bzip2, :lz4, :snappy, :zstd]
 
       iex> ExCodecs.supports?(:zstd)
       true
-
-      iex> {:ok, info} = ExCodecs.codec_info(:zstd)
-      iex> info.name
-      :zstd
-
-  The registry is backed by an ETS table for fast lookups and is
-  populated when the application starts.
   """
 
   use Agent
@@ -28,28 +20,86 @@ defmodule ExCodecs.CodecRegistry do
   @registry_name __MODULE__
 
   @doc """
-  Starts the registry agent.
+  Starts the registry Agent and optional re-registration callback.
+
+  ## Arguments
+
+    * `opts` (`keyword()`) — accepts `:register`, a zero-arity function invoked
+      after the named ETS table is created or cleared; it defaults to
+      `fn -> :ok end`
+
+  ## Returns
+
+    * `{:ok, pid()}` — the named registry Agent started and initialization ran
+    * `{:error, {:already_started, pid()}}` — the registry is already running
+    * `{:error, reason}` — Agent startup or the registration callback failed
+
+  ## Raises
+
+  With a valid keyword list, startup failures are returned by `Agent`. Passing
+  a non-keyword value can raise `FunctionClauseError` while reading options.
+
+  ## Example
+
+  A supervision tree normally starts the registry and supplies the callback:
+
+      children = [
+        {ExCodecs.CodecRegistry, register: &MyApp.Codecs.register_all/0}
+      ]
+
+      Supervisor.start_link(children, strategy: :one_for_one)
   """
   @spec start_link(keyword()) :: Agent.on_start()
-  def start_link(_opts \\ []) do
-    Agent.start_link(fn -> :ets.new(@table_name, [:set, :public, :named_table]) end,
+  def start_link(opts \\ []) do
+    register_fun = Keyword.get(opts, :register, fn -> :ok end)
+
+    Agent.start_link(
+      fn ->
+        case :ets.whereis(@table_name) do
+          :undefined ->
+            :ets.new(@table_name, [:set, :public, :named_table])
+
+          _tid ->
+            :ets.delete_all_objects(@table_name)
+        end
+
+        register_fun.()
+        @table_name
+      end,
       name: @registry_name
     )
   end
 
   @doc """
-  Registers a codec with the registry.
+  Registers a module that validates as `ExCodecs.Codec`.
 
   ## Arguments
 
-    * `name` - The atom name of the codec (e.g., `:zstd`)
-    * `module` - The module implementing `ExCodecs.Codec`
-    * `category` - The codec category (e.g., `:compression`)
+    * `name` (`atom()`) — registry key used for lookups
+    * `module` (`module()`) — loaded module exporting `encode/2` and `decode/2`
+    * `category` (`atom()`) — grouping key, such as `:compression`
 
   ## Returns
 
-    * `:ok` - Codec registered successfully
-    * `{:error, reason}` - Registration failed
+    * `:ok` — metadata was stored, replacing any entry with the same `name`
+    * `{:error, {:invalid_codec_module, module}}` — the module cannot be loaded
+      or does not export both codec callbacks
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry ETS table does not exist. A codec's
+  optional public `__codec_info__/0` function is called during registration and
+  any exception it raises propagates.
+
+  ## Examples
+
+      iex> :ok = ExCodecs.CodecRegistry.register(
+      ...>   :zstd,
+      ...>   ExCodecs.Compression.Zstd,
+      ...>   :compression
+      ...> )
+      iex> ExCodecs.CodecRegistry.supports?(:zstd)
+      true
   """
   @spec register(atom(), module(), atom()) :: :ok | {:error, term()}
   def register(name, module, category) do
@@ -66,7 +116,29 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Registers a codec as unavailable (known but not loadable).
+  Registers a known codec with `module: nil` (unavailable).
+
+  ## Arguments
+
+    * `name` (`atom()`) — known codec's registry key
+    * `category` (`atom()`) — grouping key, such as `:compression`
+
+  ## Returns
+
+  Always `:ok` after storing a `%ExCodecs.Codec{module: nil}` entry.
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> :ok = ExCodecs.CodecRegistry.register_unavailable(:example_optional, :compression)
+      iex> {:ok, info} = ExCodecs.CodecRegistry.codec_info(:example_optional)
+      iex> {info.module, ExCodecs.CodecRegistry.supports?(:example_optional)}
+      {nil, false}
+      iex> ExCodecs.CodecRegistry.unregister(:example_optional)
+      :ok
   """
   @spec register_unavailable(atom(), atom()) :: :ok
   def register_unavailable(name, category) do
@@ -85,15 +157,60 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Looks up a codec by name.
+  Deletes a registry entry (tests / hot reload).
+
+  ## Arguments
+
+    * `name` (`atom()`) — registry key to remove
 
   ## Returns
 
-    * `{:ok, {module, category, info}}` - Codec found
-    * `{:error, :unsupported_codec}` - Codec not found
+  Always `:ok`, whether or not an entry existed.
+
+  ## Raises
+
+  Raises `FunctionClauseError` when `name` is not an atom. May raise
+  `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> :ok = ExCodecs.CodecRegistry.register_unavailable(:temporary_codec, :compression)
+      iex> :ok = ExCodecs.CodecRegistry.unregister(:temporary_codec)
+      iex> ExCodecs.CodecRegistry.lookup(:temporary_codec)
+      {:error, :unsupported_codec}
+  """
+  @spec unregister(atom()) :: :ok
+  def unregister(name) when is_atom(name) do
+    :ets.delete(@table_name, name)
+    :ok
+  end
+
+  @doc """
+  Looks up `{module, category, info}` for `name`.
+
+  ## Arguments
+
+    * `name` (`atom()`) — codec registry key
+
+  ## Returns
+
+    * `{:ok, {module() | nil, atom(), ExCodecs.Codec.t()}}` — implementation,
+      category, and metadata for a registered name
+    * `{:error, :unsupported_codec}` — no entry exists for `name`
+
+  ## Raises
+
+  Raises `FunctionClauseError` when `name` is not an atom. May raise
+  `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> {:ok, {module, :compression, info}} = ExCodecs.CodecRegistry.lookup(:zstd)
+      iex> {module, info.name}
+      {ExCodecs.Compression.Zstd, :zstd}
   """
   @spec lookup(atom()) ::
-          {:ok, {module(), atom(), ExCodecs.Codec.t()}} | {:error, :unsupported_codec}
+          {:ok, {module() | nil, atom(), ExCodecs.Codec.t()}} | {:error, :unsupported_codec}
   def lookup(name) when is_atom(name) do
     case :ets.lookup(@table_name, name) do
       [{^name, {module, category, info}}] ->
@@ -105,7 +222,26 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Returns a list of all available codec names.
+  Sorted list of codec atoms with a non-nil module.
+
+  ## Arguments
+
+  None.
+
+  ## Returns
+
+  A sorted `[atom()]`. Unavailable entries registered with
+  `register_unavailable/2` are omitted.
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> codecs = ExCodecs.CodecRegistry.available_codecs()
+      iex> codecs == Enum.sort(codecs) and :zstd in codecs
+      true
   """
   @spec available_codecs() :: [atom()]
   def available_codecs do
@@ -116,7 +252,27 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Returns all registered codec names (including unavailable ones).
+  Sorted list of all registered names (including unavailable).
+
+  ## Arguments
+
+  None.
+
+  ## Returns
+
+  A sorted `[atom()]`, including entries whose module is `nil`.
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> :ok = ExCodecs.CodecRegistry.register_unavailable(:documented_optional, :compression)
+      iex> :documented_optional in ExCodecs.CodecRegistry.all_codecs()
+      true
+      iex> ExCodecs.CodecRegistry.unregister(:documented_optional)
+      :ok
   """
   @spec all_codecs() :: [atom()]
   def all_codecs do
@@ -126,7 +282,28 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Checks if a codec is supported and available.
+  Returns `true` if registered and `module != nil`.
+
+  ## Arguments
+
+    * `name` (`atom()`) — registry key to test
+
+  ## Returns
+
+  `true` only when `name` is registered with a non-`nil` module; otherwise
+  `false`.
+
+  ## Raises
+
+  Raises `FunctionClauseError` when `name` is not an atom. May raise
+  `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> ExCodecs.CodecRegistry.supports?(:zstd)
+      true
+      iex> ExCodecs.CodecRegistry.supports?(:unknown_codec)
+      false
   """
   @spec supports?(atom()) :: boolean()
   def supports?(name) when is_atom(name) do
@@ -137,7 +314,29 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Returns detailed information about a codec.
+  Returns `%ExCodecs.Codec{}` for `name`.
+
+  ## Arguments
+
+    * `name` (`atom()`) — codec registry key
+
+  ## Returns
+
+    * `{:ok, ExCodecs.Codec.t()}` — metadata for a registered codec, including
+      unavailable codecs
+    * `{:error, :unsupported_codec}` — no registry entry exists
+
+  ## Raises
+
+  Raises `FunctionClauseError` when `name` is not an atom. May raise
+  `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> {:ok, %ExCodecs.Codec{name: :zstd, category: :compression}} =
+      ...>   ExCodecs.CodecRegistry.codec_info(:zstd)
+      iex> true
+      true
   """
   @spec codec_info(atom()) :: {:ok, ExCodecs.Codec.t()} | {:error, :unsupported_codec}
   def codec_info(name) when is_atom(name) do
@@ -148,7 +347,29 @@ defmodule ExCodecs.CodecRegistry do
   end
 
   @doc """
-  Returns all codecs in a given category.
+  Lists `%ExCodecs.Codec{}` for a category atom (e.g. `:compression`).
+
+  ## Arguments
+
+    * `category` (`atom()`) — category to select, such as `:compression`
+
+  ## Returns
+
+  A `[ExCodecs.Codec.t()]` sorted by each struct's `name`. The list includes
+  unavailable entries in that category and is empty when none match.
+
+  ## Raises
+
+  Raises `FunctionClauseError` when `category` is not an atom. May raise
+  `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> codecs = ExCodecs.CodecRegistry.codecs_by_category(:compression)
+      iex> Enum.all?(codecs, &match?(%ExCodecs.Codec{category: :compression}, &1))
+      true
+      iex> Enum.map(codecs, & &1.name) == Enum.sort(Enum.map(codecs, & &1.name))
+      true
   """
   @spec codecs_by_category(atom()) :: [ExCodecs.Codec.t()]
   def codecs_by_category(category) when is_atom(category) do

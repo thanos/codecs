@@ -1,6 +1,6 @@
 [package]
 name = "ex_codecs_native"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["ExCodecs Team"]
 edition = "2021"
 rust-version = "1.85"
@@ -12,10 +12,15 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = { version = "0.36", default-features = false, features = ["derive"] }
-zstd = "0.13"
+# Pure-Rust codecs only — no C compression toolchain (no cmake/c-blosc2).
+ruzstd = "0.8"
 lz4_flex = "0.11"
 snap = "1.1"
-bzip2 = "0.4"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# bzip2 0.6 defaults to pure-Rust libbz2-rs-sys (no C libbzip2).
+bzip2 = "0.6"
+# Official Blosc2 chunk format (BloscLZ, LZ4, LZ4HC, Zlib, Zstd + filters).
+blosc2-pure-rs = { version = "0.2.4", default-features = false, features = ["zlib-rs"] }
 
 [features]
 default = ["nif_version_2_17"]

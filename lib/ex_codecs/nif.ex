@@ -7,9 +7,9 @@ defmodule ExCodecs.NIF do
   NIF functions return `{:error, atom}` tuples. This helper converts
   them into `{:error, %ExCodecs.Error{}}` tuples for consistent error handling.
   """
-  @spec wrap(atom(), {:ok, binary()} | {:error, atom()}) ::
+  @spec wrap(atom(), {:ok, binary()} | {:error, atom()} | term()) ::
           {:ok, binary()} | {:error, ExCodecs.Error.t()}
-  def wrap(_codec, {:ok, data}), do: {:ok, data}
+  def wrap(_codec, {:ok, data}) when is_binary(data), do: {:ok, data}
 
   def wrap(codec, {:error, :compression_failed}),
     do: {:error, ExCodecs.Error.new(:compression_failed, codec: codec)}
@@ -23,5 +23,34 @@ defmodule ExCodecs.NIF do
   def wrap(codec, {:error, :invalid_options}),
     do: {:error, ExCodecs.Error.new(:invalid_options, codec: codec)}
 
-  def wrap(codec, {:error, reason}), do: {:error, ExCodecs.Error.new(reason, codec: codec)}
+  def wrap(codec, {:error, reason}) when is_atom(reason),
+    do: {:error, ExCodecs.Error.new(reason, codec: codec)}
+
+  def wrap(codec, other) do
+    {:error,
+     ExCodecs.Error.new(:invalid_data,
+       codec: codec,
+       message: "Unexpected NIF return: #{inspect(other)}"
+     )}
+  end
+
+  @doc """
+  Invokes a zero-arity NIF function and wraps ErlangError/`nif_not_loaded`.
+  """
+  @spec safe_call(atom(), (-> term())) :: {:ok, term()} | {:error, ExCodecs.Error.t()}
+  def safe_call(codec, fun) when is_function(fun, 0) do
+    wrap(codec, fun.())
+  rescue
+    e in ErlangError ->
+      case e.original do
+        :nif_not_loaded ->
+          {:error, ExCodecs.Error.new(:nif_not_loaded, codec: codec)}
+
+        other ->
+          {:error, ExCodecs.Error.new(:invalid_data, codec: codec, details: other)}
+      end
+
+    e in ArgumentError ->
+      {:error, ExCodecs.Error.new(:invalid_data, codec: codec, message: Exception.message(e))}
+  end
 end

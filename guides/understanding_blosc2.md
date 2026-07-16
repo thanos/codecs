@@ -1,5 +1,16 @@
 # Understanding Blosc2
 
+ExCodecs implements **C-Blosc2-compatible chunks** only (pure Rust via
+`blosc2-pure-rs`). That means:
+
+| You can | You cannot (with ExCodecs alone) |
+|---------|----------------------------------|
+| `encode(:blosc2, binary)` → one chunk | Open/save `.b2frame` super-chunk files |
+| Interop with python-blosc2 `compress`/`decompress` on a buffer | B2ND multi-dim arrays / partial ND slices |
+| Use `:blosclz`, `:lz4`, `:lz4hc`, `:zstd`, `:zlib` + shuffle | `cname: :snappy` (use standalone `:snappy` codec) |
+
+**Standalone Snappy** remains `ExCodecs.encode(:snappy, data)`.
+
 Blosc2 is a meta-compressor designed for high-performance compression of binary data, especially numerical arrays. This guide explains how Blosc2 works, its unique features (shuffle filters, internal codecs, multi-threading), and how to use it effectively in ExCodecs.
 
 ## Overview
@@ -9,11 +20,13 @@ Blosc2 is not a compression algorithm itself. It is a **meta-compressor**: a fra
 The key innovation in Blosc2 is combining:
 
 1. **Shuffle filters** that reorganize bytes to improve compressibility of typed data.
-2. **Pluggable internal compressors** (LZ4, LZ4HC, BloscLZ, Zstd, Snappy, Zlib).
-3. **Multi-threaded compression/decompression** for parallel block processing.
-4. **Block-based operation** that enables partial decompression.
+2. **Pluggable internal compressors** — in ExCodecs: BloscLZ, LZ4, LZ4HC, Zstd, Zlib
+   (not Snappy as `cname`; use the standalone `:snappy` codec for Snappy).
+3. **Block-based chunks** — ExCodecs compresses one buffer to one chunk
+   (`nthreads: 1` on the NIF; not a multi-chunk super-chunk store).
 
-ExCodecs exposes Blosc2 as a first-class codec with configurable internal compressor, compression level, shuffle mode, and other parameters.
+ExCodecs exposes Blosc2 as a first-class **chunk** codec with configurable
+internal compressor, compression level, shuffle mode, and typesize.
 
 ## How Blosc2 Works
 
@@ -101,9 +114,9 @@ Each (possibly shuffled) block is compressed using one of several codecs:
 
 | Codec      | Description                                  | Speed         | Ratio     |
 |------------|----------------------------------------------|---------------|-----------|
-| `:blosclz` | Blosc's custom LZ-based codec                | Very Fast     | Moderate  |
+| `:blosclz` | BloscLZ (C-Blosc2 pure-Rust port)            | Very Fast     | Moderate  |
 | `:lz4`     | LZ4 (default)                                | Very Fast     | Moderate  |
-| `:lz4hc`   | LZ4 Higher Compression                       | Moderate      | Good      |
+| `:lz4hc`   | LZ4 high compression                         | Moderate      | Good      |
 | `:snappy`  | Snappy                                       | Very Fast     | Low-Moderate |
 | `:zstd`    | Zstandard                                     | Fast          | High      |
 | `:zlib`    | Zlib (Deflate)                                | Moderate      | Good      |
@@ -181,7 +194,7 @@ This header allows decompression without any external metadata.
 
 | Option        | Type             | Default    | Description                                         |
 |---------------|------------------|------------|-----------------------------------------------------|
-| `:cname`      | atom             | `:lz4`     | Internal compressor (`:lz4`, `:lz4hc`, `:blosclz`, `:zstd`, `:snappy`, `:zlib`) |
+| `:cname`      | atom             | `:lz4`     | Internal compressor (`:blosclz`, `:lz4`, `:lz4hc`, `:zstd`, `:zlib`) |
 | `:clevel`    | integer (0-9)    | 5          | Compression level (0 = no compression)             |
 | `:shuffle`   | atom             | `:byte`    | Shuffle filter (`:none`, `:byte`, `:bit`)          |
 | `:typesize`  | integer (1-256)  | 8          | Element size in bytes for shuffle                   |
@@ -192,8 +205,8 @@ This header allows decompression without any external metadata.
 
 - **`:lz4`** (default): Best for speed-sensitive applications. The shuffle filter provides most of the ratio improvement.
 - **`:zstd`**: Best ratio when combined with shuffle. Use `:zstd` with `clevel: 5-9` for maximum compression of numerical data.
-- **`:lz4hc`**: Moderate speed, better ratio than `:lz4`. Good balance.
-- **`:blosclz`**: Blosc's proprietary LZ variant. Similar to `:lz4`.
+- **`:lz4hc`**: Higher ratio than `:lz4`, slower compress.
+- **`:blosclz`**: Blosc’s own LZ codec (included for C-Blosc2 interop).
 - **`:snappy`**: Fastest, lowest ratio. Rarely the best choice since `:lz4` is fast and better.
 - **`:zlib`**: Moderate speed, good ratio. Available for compatibility.
 
@@ -242,7 +255,12 @@ With `clevel: 0`, Blosc2 applies the shuffle filter but does not compress. This 
 
 Multi-threading works by splitting the input into blocks and compressing each block in a separate thread. The overhead of thread creation and synchronization means multi-threading only helps when the data is large enough to amortize this cost.
 
-On the BEAM, NIFs run in DirtyCpu schedulers. Blosc2's threads are native OS threads spawned by the Rust `blosc2` crate, which operate independently of BEAM schedulers. Be mindful of total system CPU usage when using high thread counts.
+On the BEAM, NIFs run on DirtyCpu schedulers. Compression uses a pure-Rust
+C-Blosc2-compatible chunk implementation (`blosc2-pure-rs`) with `nthreads: 1`
+so work stays on the DirtyCpu scheduler (no extra Rayon pool from the NIF).
+
+Wire format is a **Blosc2 chunk** (not super-chunk / B2ND / `.b2frame`).
+Fixtures under `test/fixtures/blosc2/` are produced with python-blosc2.
 
 ## The Blosc2 Frame Format
 

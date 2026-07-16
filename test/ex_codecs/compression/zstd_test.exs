@@ -91,7 +91,7 @@ defmodule ExCodecs.Compression.ZstdTest do
       assert info.name == :zstd
       assert info.category == :compression
       assert info.native? == true
-      assert info.streaming? == true
+      assert info.streaming? == false
       assert info.configurable? == true
     end
   end

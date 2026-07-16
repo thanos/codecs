@@ -1,19 +1,13 @@
 defmodule ExCodecs.Compression.Lz4 do
   @moduledoc """
-  LZ4 compression codec.
+  LZ4 compression codec (size-prepended `lz4_flex` blocks).
 
-  LZ4 is an extremely fast compression algorithm focused on speed.
-  It provides compression at over 1 GB/s per core and decompression
-  at multi-GB/s speeds.
+  Not interchangeable with lz4frame / CLI `.lz4` files unless they use the
+  same size-prefix framing.
 
-  LZ4 does not accept configuration options. It uses a fixed compression
-  strategy optimized for speed.
+  ## Options
 
-  ## Performance Characteristics
-
-    * Extremely fast compression and decompression
-    * Lower compression ratio compared to Zstd or Bzip2
-    * Ideal for real-time and latency-sensitive applications
+  None.
 
   ## Examples
 
@@ -26,7 +20,39 @@ defmodule ExCodecs.Compression.Lz4 do
   @behaviour ExCodecs.Codec
 
   @doc """
-  Returns codec metadata for the registry.
+  Returns the registry metadata for the LZ4 codec.
+
+  ## Arguments
+
+  This function takes no arguments.
+
+  ## Returns
+
+  An `ExCodecs.Codec.t()` with these LZ4-specific fields:
+
+    * `name: :lz4` and `category: :compression`
+    * `module: ExCodecs.Compression.Lz4`
+    * `native?: true` because compression runs in a NIF
+    * `streaming?: false` because only complete blocks are supported
+    * `configurable?: false` because this codec has no options
+    * `version: "lz4_flex-0.11"` for the backend implementation
+
+  ## Raises / Exceptions
+
+  This function does not invoke the NIF and does not raise.
+
+  ## Examples
+
+      iex> ExCodecs.Compression.Lz4.__codec_info__()
+      %ExCodecs.Codec{
+        name: :lz4,
+        category: :compression,
+        module: ExCodecs.Compression.Lz4,
+        native?: true,
+        streaming?: false,
+        configurable?: false,
+        version: "lz4_flex-0.11"
+      }
   """
   def __codec_info__ do
     %ExCodecs.Codec{
@@ -40,23 +66,91 @@ defmodule ExCodecs.Compression.Lz4 do
     }
   end
 
-  defp lz4_version, do: "1.10.x"
+  defp lz4_version, do: "lz4_flex-0.11"
 
   @doc """
-  Encodes (compresses) data using LZ4.
+  Compresses a binary as a size-prepended `lz4_flex` block.
 
-  LZ4 does not accept configuration options.
+  ## Arguments
+
+    * `data` (`binary()`) — uncompressed bytes
+    * `opts` (`term()`) — ignored by this direct function; callers using the
+      codec behaviour or registry API should pass the keyword list `[]`
+
+  ## Returns
+
+    * `{:ok, compressed :: binary()}` containing the uncompressed-size prefix
+      and LZ4 block
+    * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when `data` is not a
+      binary, the NIF raises an argument error, or it returns an unexpected
+      value
+    * `{:error, %ExCodecs.Error{reason: :nif_not_loaded}}` when the native
+      library is unavailable
+
+  ## Raises / Exceptions
+
+  Argument guard failures and `ErlangError`/`ArgumentError` exceptions from the
+  NIF call are converted to error tuples. Unexpected exception classes may
+  propagate.
+
+  ## Examples
+
+      iex> payload = "temperature=21.7"
+      iex> {:ok, compressed} = ExCodecs.Compression.Lz4.encode(payload, [])
+      iex> byte_size(compressed) > 4
+      true
+      iex> ExCodecs.Compression.Lz4.decode(compressed, [])
+      {:ok, "temperature=21.7"}
   """
   @impl true
   def encode(data, _opts) when is_binary(data) do
-    ExCodecs.NIF.wrap(:lz4, ExCodecs.Native.lz4_compress(data))
+    ExCodecs.NIF.safe_call(:lz4, fn -> ExCodecs.Native.lz4_compress(data) end)
   end
 
+  def encode(_data, _opts), do: {:error, ExCodecs.Error.new(:invalid_data, codec: :lz4)}
+
   @doc """
-  Decodes (decompresses) LZ4-compressed data.
+  Decompresses LZ4 size-prepended data.
+
+  ## Arguments
+
+    * `data` (`binary()`) — a size-prepended `lz4_flex` block, normally
+      produced by `encode/2`
+    * `opts` (`term()`) — ignored by this direct function; callers using the
+      codec behaviour or registry API should pass the keyword list `[]`
+
+  ## Returns
+
+    * `{:ok, decompressed :: binary()}` on success
+    * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when `data` is not a
+      binary, the NIF raises an argument error, or it returns an unexpected
+      value
+    * `{:error, %ExCodecs.Error{reason: :decompression_failed}}` when the size
+      prefix or compressed block is corrupt, truncated, or incompatible
+    * `{:error, %ExCodecs.Error{reason: :nif_not_loaded}}` when the native
+      library is unavailable
+
+  ## Raises / Exceptions
+
+  Argument guard failures and `ErlangError`/`ArgumentError` exceptions from the
+  NIF call are converted to error tuples. Unexpected exception classes may
+  propagate.
+
+  ## Examples
+
+      iex> payload = <<1, 2, 3, 4, 5>>
+      iex> {:ok, compressed} = ExCodecs.Compression.Lz4.encode(payload, [])
+      iex> ExCodecs.Compression.Lz4.decode(compressed, [])
+      {:ok, <<1, 2, 3, 4, 5>>}
+
+      iex> {:error, error} = ExCodecs.Compression.Lz4.decode(<<1, 2>>, [])
+      iex> error.reason
+      :decompression_failed
   """
   @impl true
   def decode(data, _opts) when is_binary(data) do
-    ExCodecs.NIF.wrap(:lz4, ExCodecs.Native.lz4_decompress(data))
+    ExCodecs.NIF.safe_call(:lz4, fn -> ExCodecs.Native.lz4_decompress(data) end)
   end
+
+  def decode(_data, _opts), do: {:error, ExCodecs.Error.new(:invalid_data, codec: :lz4)}
 end

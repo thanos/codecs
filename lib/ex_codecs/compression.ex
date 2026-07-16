@@ -1,39 +1,52 @@
 defmodule ExCodecs.Compression do
   @moduledoc """
-  Compression codec category for ExCodecs.
+  Compression **category module**.
 
-  This module serves as a namespace for compression codecs and provides
-  category-level utilities for comparing and selecting compression algorithms.
+  Thin category helper: domain names (`compress` / `decompress`) and listing.
+  The real API is still `ExCodecs.encode/3` / `decode/3` (codec atom + binary).
 
-  ## Available Codecs
+  ## Available codec modules
 
-    * `ExCodecs.Compression.Zstd` — High ratio, good speed
-    * `ExCodecs.Compression.Lz4` — Extremely fast compression
-    * `ExCodecs.Compression.Snappy` — Fast with low overhead
-    * `ExCodecs.Compression.Bzip2` — High compression ratio
-    * `ExCodecs.Compression.Blosc2` — Meta-compressor for array data
+    * `ExCodecs.Compression.Zstd`
+    * `ExCodecs.Compression.Lz4`
+    * `ExCodecs.Compression.Snappy` — standalone Snappy (not Blosc2 `cname: :snappy`)
+    * `ExCodecs.Compression.Bzip2`
+    * `ExCodecs.Compression.Blosc2` — C-Blosc2 **chunk** only
 
-  ## Compression vs Encoding
+  ## Examples
 
-  In ExCodecs, compression is encoding — and decompression is decoding.
-  This consistent terminology spans all codec categories:
-
-      # These are equivalent
-      ExCodecs.encode(:zstd, data)     # compress
-      ExCodecs.decode(:zstd, data)     # decompress
+      {:ok, c} = ExCodecs.Compression.compress(:zstd, data, level: 3)
+      {:ok, d} = ExCodecs.Compression.decompress(:zstd, c)
+      # same as:
+      {:ok, c} = ExCodecs.encode(:zstd, data, level: 3)
   """
 
   alias ExCodecs.CodecRegistry
 
   @doc """
-  Returns all available compression codecs.
+  Lists metadata for every registered compression codec.
 
-  Returns a list of `%ExCodecs.Codec{}` structs sorted by name.
+  ## Arguments
+
+  This function takes no arguments.
+
+  ## Returns
+
+  A list of `ExCodecs.Codec.t()` values sorted by codec name. Each struct
+  describes the registry name, implementation module, native/configuration
+  flags, streaming support, and backend version. A known codec that is not
+  available at runtime may have `module: nil`.
+
+  ## Raises / Exceptions
+
+  This function does not raise.
 
   ## Examples
 
       iex> codecs = ExCodecs.Compression.available_codecs()
-      iex> is_list(codecs) and length(codecs) >= 5
+      iex> Enum.map(codecs, & &1.name)
+      [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+      iex> Enum.all?(codecs, &(&1.category == :compression))
       true
   """
   @spec available_codecs() :: [ExCodecs.Codec.t()]
@@ -42,9 +55,43 @@ defmodule ExCodecs.Compression do
   end
 
   @doc """
-  Compresses data with the specified codec.
+  Compresses `data` with a registered compression codec.
 
-  Shortcut for `ExCodecs.encode/3`.
+  This is the compression-category alias for `ExCodecs.encode/3`.
+
+  ## Arguments
+
+    * `codec` (`atom()`) — registered compression codec, such as `:zstd`,
+      `:lz4`, `:snappy`, `:bzip2`, or `:blosc2`
+    * `data` (`binary()`) — bytes to compress
+    * `opts` (`keyword()`) — codec-specific options; defaults to `[]`
+
+  ## Returns
+
+    * `{:ok, compressed :: binary()}` on success
+    * `{:error, %ExCodecs.Error{reason: reason}}` on failure, where `reason`
+      can be:
+      * `:unsupported_codec` when `codec` is not registered
+      * `:codec_unavailable` when its implementation is unavailable
+      * `:invalid_data` when the arguments have the wrong shape
+      * `:invalid_options` when codec option validation fails
+      * `:compression_failed` when the native compressor rejects the operation
+      * `:nif_not_loaded` when the native library is unavailable
+
+  ## Raises / Exceptions
+
+  Normal validation and wrapped NIF failures are returned as error tuples.
+  Unexpected VM-level faults outside the NIF wrapper may still raise.
+
+  ## Examples
+
+      iex> payload = "sensor=18.4"
+      iex> {:ok, compressed} = ExCodecs.Compression.compress(:zstd, payload, level: 3)
+      iex> {:ok, ^payload} = ExCodecs.Compression.decompress(:zstd, compressed)
+
+      iex> {:error, error} = ExCodecs.Compression.compress(:zstd, "data", level: 23)
+      iex> error.reason
+      :invalid_options
   """
   @spec compress(atom(), binary(), keyword()) :: {:ok, binary()} | {:error, ExCodecs.Error.t()}
   def compress(codec, data, opts \\ []) do
@@ -52,9 +99,43 @@ defmodule ExCodecs.Compression do
   end
 
   @doc """
-  Decompresses data with the specified codec.
+  Decompresses `data` with a registered compression codec.
 
-  Shortcut for `ExCodecs.decode/3`.
+  This is the compression-category alias for `ExCodecs.decode/3`.
+
+  ## Arguments
+
+    * `codec` (`atom()`) — registered codec that produced the payload
+    * `data` (`binary()`) — compressed bytes in that codec's wire format
+    * `opts` (`keyword()`) — codec-specific decode options; defaults to `[]`
+      and is currently ignored by the built-in compression codecs
+
+  ## Returns
+
+    * `{:ok, decompressed :: binary()}` on success
+    * `{:error, %ExCodecs.Error{reason: reason}}` on failure, where `reason`
+      can be:
+      * `:unsupported_codec` when `codec` is not registered
+      * `:codec_unavailable` when its implementation is unavailable
+      * `:invalid_data` for invalid argument types or an unexpected NIF result
+      * `:decompression_failed` for corrupt, truncated, or mismatched input
+      * `:nif_not_loaded` when the native library is unavailable
+
+  ## Raises / Exceptions
+
+  Normal validation and wrapped NIF failures are returned as error tuples.
+  Unexpected VM-level faults outside the NIF wrapper may still raise.
+
+  ## Examples
+
+      iex> payload = <<0, 1, 2, 3, 4>>
+      iex> {:ok, compressed} = ExCodecs.Compression.compress(:snappy, payload)
+      iex> ExCodecs.Compression.decompress(:snappy, compressed)
+      {:ok, <<0, 1, 2, 3, 4>>}
+
+      iex> {:error, error} = ExCodecs.Compression.decompress(:snappy, "not snappy")
+      iex> error.reason
+      :decompression_failed
   """
   @spec decompress(atom(), binary(), keyword()) :: {:ok, binary()} | {:error, ExCodecs.Error.t()}
   def decompress(codec, data, opts \\ []) do

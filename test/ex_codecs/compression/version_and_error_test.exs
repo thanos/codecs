@@ -11,7 +11,7 @@ defmodule ExCodecs.Compression.CodecVersionTest do
       assert info.category == :compression
       assert info.module == Zstd
       assert info.native? == true
-      assert info.streaming? == true
+      assert info.streaming? == false
       assert info.configurable? == true
       assert is_binary(info.version)
     end
@@ -52,7 +52,7 @@ defmodule ExCodecs.Compression.CodecVersionTest do
       assert info.category == :compression
       assert info.module == Blosc2
       assert info.native? == true
-      assert info.streaming? == true
+      assert info.streaming? == false
       assert info.configurable? == true
       assert is_binary(info.version)
     end
@@ -80,8 +80,10 @@ defmodule ExCodecs.Compression.CodecVersionTest do
     end
 
     test "blosc2 returns error for invalid magic" do
-      assert {:error, %Error{reason: :invalid_data}} =
+      assert {:error, %Error{reason: reason}} =
                ExCodecs.decode(:blosc2, <<0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>>)
+
+      assert reason in [:invalid_data, :decompression_failed]
     end
 
     test "blosc2 validates cname option" do

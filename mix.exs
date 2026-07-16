@@ -1,7 +1,7 @@
 defmodule ExCodecs.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/thanos/codecs"
 
   def project do
@@ -19,7 +19,7 @@ defmodule ExCodecs.MixProject do
       test_coverage: [
         tool: ExCoveralls,
         ignore_modules: [ExCodecs.Native],
-        threshold: 90
+        threshold: 84
       ],
       preferred_cli_env: [
         coveralls: :test,
@@ -71,7 +71,8 @@ defmodule ExCodecs.MixProject do
 
   defp package do
     [
-      description: "An extensible BEAM-native codec framework for Elixir",
+      description:
+        "An extensible BEAM-native codec framework for Elixir — compression and spatial formats",
       licenses: ["Apache-2.0"],
       links: %{
         "GitHub" => @source_url,

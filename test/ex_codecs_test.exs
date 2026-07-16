@@ -191,17 +191,21 @@ defmodule ExCodecsTest do
 
   describe "codec_unavailable path" do
     test "encode with unavailable codec returns codec_unavailable error" do
-      :ok = ExCodecs.CodecRegistry.register_unavailable(:future_codec, :compression)
+      name = :"future_codec_#{System.unique_integer([:positive])}"
+      :ok = ExCodecs.CodecRegistry.register_unavailable(name, :compression)
+      on_exit(fn -> ExCodecs.CodecRegistry.unregister(name) end)
 
       assert {:error, %ExCodecs.Error{reason: :codec_unavailable}} =
-               ExCodecs.encode(:future_codec, "data")
+               ExCodecs.encode(name, "data")
     end
 
     test "decode with unavailable codec returns codec_unavailable error" do
-      :ok = ExCodecs.CodecRegistry.register_unavailable(:future_codec2, :compression)
+      name = :"future_codec2_#{System.unique_integer([:positive])}"
+      :ok = ExCodecs.CodecRegistry.register_unavailable(name, :compression)
+      on_exit(fn -> ExCodecs.CodecRegistry.unregister(name) end)
 
       assert {:error, %ExCodecs.Error{reason: :codec_unavailable}} =
-               ExCodecs.decode(:future_codec2, <<1, 2, 3>>)
+               ExCodecs.decode(name, <<1, 2, 3>>)
     end
   end
 

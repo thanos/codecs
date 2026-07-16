@@ -1,11 +1,11 @@
-use rustler::{Binary, Encoder, Env, Term};
+use rustler::{Binary, Env, Term};
 use std::io::{Read, Write};
 
 use crate::atoms;
-use crate::util::encode_binary;
+use crate::util::{err, ok_binary};
 
 pub fn version() -> String {
-    "0.4.x".to_string()
+    "bzip2-0.6/libbz2-rs".to_string()
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -15,10 +15,8 @@ pub fn bzip2_compress<'a>(env: Env<'a>, data: Binary, block_size: u32) -> Term<'
     let result: Result<Vec<u8>, std::io::Error> = (|| {
         let mut compressed = Vec::with_capacity(data.len() / 2);
         {
-            let mut writer = bzip2::write::BzEncoder::new(
-                &mut compressed,
-                bzip2::Compression::new(block_size),
-            );
+            let mut writer =
+                bzip2::write::BzEncoder::new(&mut compressed, bzip2::Compression::new(block_size));
             writer.write_all(data.as_slice())?;
             writer.finish()?;
         }
@@ -26,8 +24,8 @@ pub fn bzip2_compress<'a>(env: Env<'a>, data: Binary, block_size: u32) -> Term<'
     })();
 
     match result {
-        Ok(compressed) => (atoms::ok(), encode_binary(env, &compressed)).encode(env),
-        Err(_) => (atoms::error(), atoms::compression_failed()).encode(env),
+        Ok(compressed) => ok_binary(env, &compressed),
+        Err(_) => err(env, atoms::compression_failed()),
     }
 }
 
@@ -43,7 +41,7 @@ pub fn bzip2_decompress<'a>(env: Env<'a>, data: Binary) -> Term<'a> {
     })();
 
     match result {
-        Ok(decompressed) => (atoms::ok(), encode_binary(env, &decompressed)).encode(env),
-        Err(_) => (atoms::error(), atoms::decompression_failed()).encode(env),
+        Ok(decompressed) => ok_binary(env, &decompressed),
+        Err(_) => err(env, atoms::decompression_failed()),
     }
 }
