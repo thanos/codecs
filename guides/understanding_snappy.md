@@ -185,6 +185,8 @@ In practice, LZ4 usually compresses slightly better and decompresses slightly fa
 
 3. **Pre-allocate decompression buffers.** Snappy encodes the decompressed size in the frame header, allowing you to allocate the exact output buffer.
 
-4. **Combine with Blosc2 for arrays.** If you need fast compression of numerical data, Blosc2 with its Snappy inner codec (`cname: :snappy`) provides both shuffle optimization and Snappy's speed.
+4. **Arrays with shuffle:** use Blosc2 with `cname: :lz4` (or `:zstd`), not
+   `cname: :snappy` — Snappy is not a standard C-Blosc2 inner codec in ExCodecs.
+   For pure Snappy, use this codec: `ExCodecs.encode(:snappy, data)`.
 
 5. **Measure on your data.** If Snappy provides less than 1.3:1 ratio, compression may not be worthwhile. Consider passing data through uncompressed.

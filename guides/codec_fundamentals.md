@@ -26,10 +26,14 @@ Every codec in ExCodecs implements two functions:
 
 Key properties of this design:
 
-- **Binary in, binary out.** Codecs operate on raw binaries. Structured data must be serialized before encoding.
+- **Binary in, binary out** for **registry** codecs. Structured data is either
+  serialized first, or handled by a **category module** (e.g. spatial structs
+  via `ExCodecs.Spatial`).
 - **Optionally configurable.** The `opts` keyword list allows codec-specific tuning (compression level, block size, shuffle mode) while keeping the call signature uniform.
 - **Explicit error handling.** Every operation returns `{:ok, result}` or `{:error, %ExCodecs.Error{}}`. There are no exceptions for normal failure modes.
 - **Composable.** Because the input and output share the same type, codecs can be chained: encode with Zstd, then encode the result with Blosc2 if desired.
+- **Category modules** provide domain naming (`Compression.compress/3`) or
+  non-binary shapes (`Spatial.encode/2`) without overloading the registry API.
 
 ### Compressing Data
 
@@ -96,9 +100,9 @@ def __codec_info__ do
     category: :compression,
     module: __MODULE__,
     native?: true,
-    streaming?: true,
+    streaming?: false,
     configurable?: true,
-    version: "1.5.6"
+    version: "structured-zstd-0.0.48"
   }
 end
 ```
@@ -111,7 +115,7 @@ The `%ExCodecs.Codec{}` struct contains:
 | `category`        | `atom()`          | Category (e.g., `:compression`)                   |
 | `module`          | `module() \| nil` | Implementing module, or `nil` if unavailable      |
 | `native?`         | `boolean()`       | Whether a native NIF implementation exists         |
-| `streaming?`      | `boolean()`       | Whether the codec supports streaming operation     |
+| `streaming?`      | `boolean()`       | Whether an incremental encode/decode API is exposed |
 | `configurable?`   | `boolean()`       | Whether the codec accepts configuration options    |
 | `version`         | `String.t() \| nil` | Library version string                          |
 

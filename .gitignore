@@ -1,6 +1,6 @@
 # The directory Mix will write compiled artifacts to.
 /_build/
-/prompts/
+/baoulo/
 
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
@@ -25,10 +25,11 @@ ex_codecs-*.tar
 
 # Rust artifacts
 /native/ex_codecs_native/target/
-/native/ex_codecs_native/Cargo.lock
 
 # Rustler precompiled cache
 /priv/native/
 
 # Benchmark results
 /bench/results/
+.tool-versions
+.DS_Store

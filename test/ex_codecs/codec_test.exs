@@ -17,6 +17,7 @@ defmodule ExCodecs.CodecTest do
 
       assert codec.name == :zstd
       assert codec.category == :compression
+      assert codec.interface == :binary
       assert codec.module == ExCodecs.Compression.Zstd
       assert codec.native? == true
       assert codec.streaming? == true
@@ -27,6 +28,7 @@ defmodule ExCodecs.CodecTest do
     test "has default values" do
       codec = %Codec{name: :test}
       assert codec.category == nil
+      assert codec.interface == :binary
       assert codec.module == nil
       assert codec.native? == nil
       assert codec.streaming? == nil

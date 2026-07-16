@@ -7,7 +7,7 @@ ex_codecs_dep =
   if File.exists?(local_path) do
     [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
   else
-    [{:ex_codecs, "~> 0.1"}]
+    [{:ex_codecs, "~> 0.2.0"}]
   end
 
 config =
@@ -55,7 +55,11 @@ ExCodecs provides **lossless** codecs — decoded data is bit-for-bit identical 
 ```elixir
 data = :crypto.strong_rand_bytes(8192)
 
-for codec <- ExCodecs.available_codecs() do
+compression_codecs =
+  ExCodecs.Compression.available_codecs()
+  |> Enum.map(& &1.name)
+
+for codec <- compression_codecs do
   {:ok, enc} = ExCodecs.encode(codec, data)
   {:ok, dec} = ExCodecs.decode(codec, enc)
   IO.puts("#{String.pad_trailing(inspect(codec), 10)} lossless: #{dec == data}")
@@ -102,9 +106,9 @@ Blosc2 reorders bytes to create longer runs before applying an internal compress
 # Numerical data with patterns across float64 values
 floats = for i <- 1..2048, into: <<>>, do: <<i * 0.125::float-size(64)-little>>
 
-{:ok, blosc_none} = ExCodecs.encode(:blosc2, floats, shuffle: :none)
-{:ok, blosc_byte} = ExCodecs.encode(:blosc2, floats, shuffle: :byte)
-{:ok, blosc_bit} = ExCodecs.encode(:blosc2, floats, shuffle: :bit)
+{:ok, blosc_none} = ExCodecs.encode(:blosc2, floats, typesize: 8, shuffle: :none)
+{:ok, blosc_byte} = ExCodecs.encode(:blosc2, floats, typesize: 8, shuffle: :byte)
+{:ok, blosc_bit} = ExCodecs.encode(:blosc2, floats, typesize: 8, shuffle: :bit)
 {:ok, zstd_plain} = ExCodecs.encode(:zstd, floats)
 
 IO.puts("Original:        #{byte_size(floats)} bytes")

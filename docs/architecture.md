@@ -20,8 +20,8 @@ A production-quality, extensible BEAM-native codec framework for Elixir.
 
 ## Design Philosophy
 
-ExCodecs is not a compression library. It is a codec framework where
-compression happens to be the first implemented category.
+ExCodecs is not only a compression library. It is a codec framework with
+compression and spatial categories.
 
 The central insight is that many binary transformations -- compression,
 hashing, checksums, binary encodings, content addressing -- share the same
@@ -37,10 +37,11 @@ Two terminology decisions flow from this insight:
    tag. Base64 encodes binary into ASCII. The encode/decode terminology unifies
    all codec categories under one mental model.
 
-2. **Codec framework, not compression library.** The architecture must support
-   adding, discovering, and querying codecs at runtime without changing the
-   public API. A new codec category should require adding a namespace module
-   and implementing two callbacks -- nothing more.
+2. **Codec framework, not compression library.** Categories belong to one
+   framework but may expose APIs suited to their data shape. Binary→binary
+   codecs share the registry behaviour; domain codecs such as spatial formats
+   use a category-specific contract. All categories retain the same tagged
+   result and structured-error conventions.
 
 The result is an API where `ExCodecs.encode(:zstd, data)` and
 `ExCodecs.encode(:sha256, data)` look and feel the same, even though one
@@ -51,61 +52,61 @@ reversibly compresses data and the other irreversibly hashes it.
 ## Architecture Overview
 
 ```
-+---------------------------------------------------------------+
-|                        Public API                              |
-|  ExCodecs.encode/3    ExCodecs.decode/3                        |
-|  ExCodecs.available_codecs/0   ExCodecs.supports?/1           |
-|  ExCodecs.codec_info/1                                         |
-+----------------------------+----------------------------------+
-                             |
-                    +--------v--------+
-                    | CodecRegistry   |
-                    | (ETS-backed)    |
-                    +--------+--------+
-                             |
-              +--------------+---------------+
-              |              |               |
-    +---------v----+  +------v-----+  +-----v------+
-    | :compression  |  | :hashing   |  | :checksum  |   (future)
-    |  namespace    |  | (future)   |  | (future)   |
-    +---------+----+  +------------+  +------------+
-              |
-    +---------+----------+-----------+----------+
-    |         |          |           |          |
-  +---+   +---+   +-------+   +-----+   +--------+
-  |Zstd|   |LZ4|   |Snappy|   |Bzip2|   |Blosc2 |
-  +---+   +---+   +-------+   +-----+   +--------+
-    |       |        |          |          |
-    +---+---+--------+----------+----------+
-        |
-  +-----v------+
-  | Native NIF |  (Rustler, DirtyCpu scheduling)
-  +------------+
-        |
-  +-----v-----+
-  | Rust impl |  (zstd, lz4_flex, snap, bzip2, pure Rust blosc2)
-  +-----------+
++------------------------------------------------------------------+
+| Public discovery                                                  |
+| available_codecs/0,1   supports?/1   codec_info/1                |
++-------------------------------+----------------------------------+
+                                |
+                       +--------v---------+
+                       | Shared catalog   |
+                       | CodecRegistry/ETS|
+                       +---+----------+---+
+                           |          |
+              +------------v--+    +--v----------------+
+              | :compression  |    | :spatial          |
+              | interface:     |    | interface:        |
+              | :binary        |    | :spatial          |
+              +-------+--------+    +---------+----------+
+                      |                       |
+      ExCodecs.encode/3, decode/3    ExCodecs.Spatial.encode/2,
+                      |               decode/2, stream helpers
+       +--------------+------+       +---------+---------+
+       | Zstd/LZ4/Snappy/... |       | PLY / EXCP / GSPL |
+       +--------------+------+       +-------------------+
+                      |
+             +--------v---------+
+             | Rustler NIFs     |
+             | pure-Rust codecs |
+             +------------------+
 ```
 
-The architecture is layered in four tiers:
+Discovery is unified; operation dispatch is category-safe. The catalog's
+`interface` metadata prevents top-level binary encode/decode from accidentally
+calling a struct↔format codec. `ExCodecs.Spatial` resolves its implementations
+from the same catalog.
+
+The implementation is layered in four tiers:
 
 1. **Public API** -- The user-facing `ExCodecs` module providing `encode`,
    `decode`, `available_codecs`, `supports?`, and `codec_info`.
 
-2. **Registry** -- The `CodecRegistry` module backed by an ETS table that maps
-   codec atoms to module references, category atoms, and metadata.
+2. **Shared catalog** -- The `CodecRegistry` module backed by an ETS table that
+   maps codec atoms to modules, categories, interface shapes, and metadata.
 
-3. **Codec modules** -- Individual modules implementing `ExCodecs.Codec`, one
-   per codec algorithm. Each module validates options and delegates to the NIF.
+3. **Codec modules** -- Binary modules implement `ExCodecs.Codec`; spatial
+   modules expose the category's struct↔format contract.
 
-4. **Native layer** -- The Rustler NIF (`ExCodecs.Native`) providing the actual
-   algorithmic implementations compiled from Rust.
+4. **Native layer** -- Compression modules delegate to the Rustler NIF
+   (`ExCodecs.Native`). Spatial codecs are Elixir implementations in v0.2.0.
 
 ---
 
 ## Public API
 
-The public API surface is intentionally small: five functions.
+The binary registry API is intentionally small (encode/decode plus discovery).
+Spatial uses `ExCodecs.Spatial.encode/2` / `decode/2`; top-level
+`stream_encode/2` and `stream_decode/2` are convenience delegates for spatial
+data. Top-level `encode/3` / `decode/3` are not overloaded for spatial structs.
 
 ```elixir
 # Encoding and decoding
@@ -113,7 +114,9 @@ ExCodecs.encode(:zstd, data, level: 3)       #=> {:ok, binary} | {:error, Error.
 ExCodecs.decode(:zstd, compressed)            #=> {:ok, binary} | {:error, Error.t()}
 
 # Discovery
-ExCodecs.available_codecs()                    #=> [:bzip2, :blosc2, :lz4, :snappy, :zstd]
+ExCodecs.available_codecs()                    #=> [..., :gsplat, :ply, :spatial_binary, ...]
+ExCodecs.available_codecs(:compression)        #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+ExCodecs.available_codecs(:spatial)            #=> [:gsplat, :ply, :spatial_binary]
 ExCodecs.supports?(:zstd)                     #=> true | false
 ExCodecs.codec_info(:zstd)                    #=> {:ok, %Codec{}} | {:error, :unsupported_codec}
 ```
@@ -240,11 +243,12 @@ def __codec_info__ do
   %ExCodecs.Codec{
     name: :zstd,
     category: :compression,
+    interface: :binary,
     module: __MODULE__,
     native?: true,
-    streaming?: true,
+    streaming?: false,
     configurable?: true,
-    version: "1.5.6"
+    version: "structured-zstd-0.0.48"
   }
 end
 ```
@@ -255,6 +259,7 @@ The `%ExCodecs.Codec{}` struct fields:
 |-----------------|-------------------|-------------------------------------------------|
 | `name`          | `atom()`          | The codec's registry key                        |
 | `category`      | `atom()`          | Category (`:compression`, `:hashing`, etc.)     |
+| `interface`     | `:binary \| :spatial` | Operation API shape                         |
 | `module`        | `module() \| nil` | The implementing module, or nil if unavailable   |
 | `native?`       | `boolean()`        | Whether the codec uses a NIF                    |
 | `streaming?`    | `boolean()`        | Whether the codec supports streaming            |
@@ -268,7 +273,7 @@ that add complexity without benefit. Instead, the registry probes for the
 function with `function_exported?/3`:
 
 ```elixir
-defp build_codec_info(name, module, category) do
+defp build_codec_info(name, module, category, interface, metadata) do
   info =
     if function_exported?(module, :__codec_info__, 0) do
       module.__codec_info__()
@@ -279,11 +284,12 @@ defp build_codec_info(name, module, category) do
   %ExCodecs.Codec{
     name: name,
     category: category,
+    interface: interface,
     module: module,
-    native: Map.get(info, :native?, true),
-    streaming?: Map.get(info, :streaming?, false),
-    configurable?: Map.get(info, :configurable?, false),
-    version: Map.get(info, :version)
+    native?: Keyword.get(metadata, :native?, info.native?),
+    streaming?: Keyword.get(metadata, :streaming?, info.streaming?),
+    configurable?: Keyword.get(metadata, :configurable?, info.configurable?),
+    version: Keyword.get(metadata, :version, info.version)
   }
 end
 ```
@@ -329,12 +335,15 @@ The Elixir side is defined in `ExCodecs.Native`:
 
 ```elixir
 defmodule ExCodecs.Native do
-  use Rustler,
+  use RustlerPrecompiled,
     otp_app: :ex_codecs,
     crate: :ex_codecs_native,
-    mode: :release
+    # ... version, base_url, targets ...
 end
 ```
+
+The native crate is pure Rust (structured-zstd, lz4_flex, snap, flate2 rust backend,
+libbz2-rs) — no C compression libraries.
 
 Each NIF function has a fallback that returns `:erlang.nif_error(:nif_not_loaded)`:
 
@@ -443,15 +452,15 @@ strip = true
 
 ## Runtime Codec Discovery
 
-The `ExCodecs.CodecRegistry` is an ETS-backed Agent that maps codec names
-to their implementations and metadata.
+The `ExCodecs.CodecRegistry` is an ETS-backed Agent that serves as the shared
+catalog for binary and spatial codec names, implementations, and metadata.
 
 ### Why ETS?
 
 ETS offers O(1) lookups for `set`-type tables. Codec resolution happens on
-every `encode`/`decode` call, so the registry must be fast. A GenServer with
-a map would serialize all codec lookups through a single process; ETS allows
-concurrent reads without bottlenecks.
+binary and spatial encode/decode calls, so the catalog must be fast. A
+GenServer with a map would serialize all lookups through a single process; ETS
+allows concurrent reads without bottlenecks.
 
 ### Registry data model
 
@@ -466,12 +475,13 @@ Example entries:
 ```elixir
 {:zstd,   {ExCodecs.Compression.Zstd,   :compression, %Codec{name: :zstd, ...}}}
 {:lz4,    {ExCodecs.Compression.Lz4,    :compression, %Codec{name: :lz4, ...}}}
+{:ply,    {ExCodecs.Spatial.Codec.PLY,  :spatial, %Codec{name: :ply, interface: :spatial, ...}}}
 {:sha256, {nil, :hashing, %Codec{name: :sha256, module: nil, ...}}}  # unavailable
 ```
 
-When a codec's NIF fails to load, the module field is `nil` and the codec is
-registered as unavailable. Calls to `encode`/`decode` with an unavailable
-codec return `{:error, %ExCodecs.Error{reason: :codec_unavailable}}`.
+When an implementation cannot load, the module field is `nil` and the codec is
+registered as unavailable. Calls through its category API return
+`{:error, %ExCodecs.Error{reason: :codec_unavailable}}`.
 
 ### Discovery flow
 
@@ -487,7 +497,11 @@ codec return `{:error, %ExCodecs.Error{reason: :codec_unavailable}}`.
        +---> {:ok, {ExCodecs.Compression.Zstd, :compression, info}}
        |          |
        |          v
-       |     info.module != nil?  -->  yes  -->  module.encode(data, opts)
+       |     info.interface == :binary and module != nil?
+       |                              |
+       |                             yes --> module.encode(data, opts)
+       |
+       +---> spatial interface --> return category-API guidance
        |
        +---> {:error, :unsupported_codec}
                   |
@@ -499,17 +513,23 @@ codec return `{:error, %ExCodecs.Error{reason: :codec_unavailable}}`.
 
 ```elixir
 # List all codecs with available implementations
-ExCodecs.available_codecs()            #=> [:bzip2, :blosc2, :lz4, :snappy, :zstd]
+ExCodecs.available_codecs()            #=> [:blosc2, ..., :gsplat, :ply, ..., :zstd]
+
+# Filter available names by category
+ExCodecs.available_codecs(:spatial)    #=> [:gsplat, :ply, :spatial_binary]
 
 # List all registered codecs (including unavailable)
-ExCodecs.CodecRegistry.all_codecs()    #=> [:blosc2, :bzip2, :lz4, :sha256, :snappy, :zstd]
+ExCodecs.CodecRegistry.all_codecs()    #=> [:blosc2, ..., :ply, :sha256, ..., :zstd]
 
 # Check if a specific codec is available
 ExCodecs.supports?(:zstd)              #=> true
 
 # Get detailed metadata
 ExCodecs.codec_info(:zstd)
-#=> {:ok, %Codec{name: :zstd, category: :compression, native?: true, ...}}
+#=> {:ok, %Codec{name: :zstd, category: :compression, interface: :binary, ...}}
+
+ExCodecs.codec_info(:ply)
+#=> {:ok, %Codec{name: :ply, category: :spatial, interface: :spatial, ...}}
 
 # Filter by category
 ExCodecs.Compression.available_codecs()
@@ -705,7 +725,25 @@ predictable and navigable.
 
 ---
 
-## Future Categories
+## Codec Categories
+
+### Spatial (implemented in 0.2.0)
+
+Spatial codecs map structured geometric types to interchange formats. They are
+pure Elixir and use the specialized `ExCodecs.Spatial` API rather than forcing
+structs through the binary-only `ExCodecs.Codec` callbacks. They are registered
+in the shared catalog with `category: :spatial` and `interface: :spatial`.
+
+`ExCodecs.available_codecs/0` lists all available entries,
+`ExCodecs.available_codecs(:spatial)` filters the shared catalog, and
+`ExCodecs.Spatial.available_formats/0` presents spatial formats in the
+category's preferred built-in order.
+
+| Format            | Module                              |
+|-------------------|-------------------------------------|
+| `:ply`            | `ExCodecs.Spatial.Codec.PLY`        |
+| `:spatial_binary` | `ExCodecs.Spatial.Codec.Binary`     |
+| `:gsplat`         | `ExCodecs.Spatial.Codec.Gsplat`     |
 
 ### Hashing
 
@@ -790,7 +828,8 @@ codec, then assembles the result according to the CID specification.
 
 ---
 
-The architecture described here is built to accommodate all of these categories
-without API changes. Every new codec, regardless of category, implements the
-same two-callback behaviour, registers in the same ETS table, and is queried
-through the same five public functions.
+The architecture described here accommodates categories through specialized
+entry points under one framework. Binary-shaped categories can reuse
+`ExCodecs.Codec` and the ETS registry; domain-shaped categories may define
+their own behaviour and discovery while preserving common result, error, and
+documentation conventions.

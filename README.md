@@ -8,21 +8,28 @@
 [![Elixir](https://img.shields.io/badge/Elixir-%7E%3E%201.17-purple.svg)](https://elixir-lang.org)
 [![Coverage Status](https://coveralls.io/repos/github/thanos/codecs/badge.svg?branch=main)](https://coveralls.io/github/thanos/codecs?branch=main)
 
-An extensible BEAM-native codec framework for Elixir.
+An extensible BEAM-native codec framework for Elixir with specialized category
+APIs. Binary registry codecs use `ExCodecs.encode/3` / `decode/3`;
+`ExCodecs.Spatial` handles point-cloud and Gaussian domain types.
 
-ExCodecs provides a unified API for compression, decompression, hashing, checksums,
-binary encodings, and future content-addressing codecs — all backed by Rust NIFs
-for high throughput on the BEAM.
+**Blosc2** produces C-Blosc2-compatible **chunks** only (not super-chunk /
+B2ND / `.b2frame`). Standalone `:snappy` is separate from Blosc2 `cname:`.
 
 ## Design Philosophy
 
 ExCodecs is not a compression library. It is a codec framework.
 
-Compression is merely the first codec category. The architecture supports future
-expansion into hashing, checksums, binary encodings, content addressing, and
-streaming -- without changing the public API. Every codec implements the
-`ExCodecs.Codec` behaviour and registers with the `ExCodecs.CodecRegistry` at
-startup, meaning new categories slot in without touching existing code.
+Compression and spatial formats are categories in one framework. Each category
+uses an API shaped for its data:
+
+- Binary→binary registry codecs implement `ExCodecs.Codec` and use
+  `ExCodecs.encode/3` / `decode/3`.
+- Spatial struct↔format codecs use `ExCodecs.Spatial`.
+
+Discovery is category-specific: `ExCodecs.available_codecs/0` lists registered
+binary codecs, while `ExCodecs.Spatial.available_formats/0` lists spatial
+formats. This keeps one framework and error model without forcing unlike data
+shapes through an overloaded function.
 
 The `encode`/`decode` naming is category-agnostic: for compression codecs,
 encoding is compressing and decoding is decompressing; for a future hash codec,
@@ -35,7 +42,7 @@ Add `ex_codecs` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_codecs, "~> 0.1.1"}
+    {:ex_codecs, "~> 0.2.0"}
   ]
 end
 ```
@@ -48,61 +55,80 @@ mix deps.get && mix compile
 
 Precompiled NIF binaries are available for macOS (Intel and ARM64), Linux
 (x86_64 and ARM64, glibc and musl), and Windows (x86_64). They are downloaded
-automatically from the [GitHub releases](https://github.com/ex-codecs/ex_codecs/releases)
+automatically from the [GitHub releases](https://github.com/thanos/codecs/releases)
 when you run `mix deps.get`. If a precompiled artifact is not available for your
 target, ExCodecs falls back to compiling the Rust NIF from source (requires
-Rust 1.85+).
+Rust 1.94+). The native crate is **pure Rust** (no C toolchain / system
+compression libraries).
 
 ## Quick Start
 
 ```elixir
-# Compress data
+# Registry codecs (primary API — always codec atom + binary)
 {:ok, compressed} = ExCodecs.encode(:zstd, "hello world")
 {:ok, original}  = ExCodecs.decode(:zstd, compressed)
 original #=> "hello world"
 
-# Compression with options
 {:ok, compressed} = ExCodecs.encode(:zstd, my_binary, level: 9)
 {:ok, compressed} = ExCodecs.encode(:blosc2, my_binary, cname: :zstd, clevel: 5, shuffle: :byte)
 
-# Discover available codecs
-ExCodecs.available_codecs()  #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+# Category alias for compression
+{:ok, compressed} = ExCodecs.Compression.compress(:lz4, data)
+{:ok, original}   = ExCodecs.Compression.decompress(:lz4, compressed)
+
+# Shared discovery
+ExCodecs.available_codecs()  #=> [:blosc2, :bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
+ExCodecs.available_codecs(:compression) #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+ExCodecs.available_codecs(:spatial)     #=> [:gsplat, :ply, :spatial_binary]
 ExCodecs.supports?(:zstd)    #=> true
 ExCodecs.codec_info(:zstd)   #=> {:ok, %ExCodecs.Codec{name: :zstd, category: :compression, ...}}
 
-# Convenience aliases for compression
-{:ok, compressed} = ExCodecs.Compression.compress(:lz4, data)
-{:ok, original}   = ExCodecs.Compression.decompress(:lz4, compressed)
+# Spatial category API (structs ↔ formats)
+alias ExCodecs.Spatial.{Point, PointCloud}
+cloud = PointCloud.new([Point.new(0.0, 0.0, 0.0, color: {255, 0, 0})])
+{:ok, ply} = ExCodecs.Spatial.encode(cloud, format: :ply)
+{:ok, cloud} = ExCodecs.Spatial.decode(ply, format: :ply)
+ExCodecs.Spatial.stream_decode(ply, format: :ply) |> Enum.to_list()
+ExCodecs.Spatial.available_formats() #=> [:ply, :spatial_binary, :gsplat]
+ExCodecs.codec_info(:ply) #=> {:ok, %ExCodecs.Codec{category: :spatial, interface: :spatial, ...}}
 ```
 
 ## API Overview
 
-### `encode/3`
+### Binary registry API
 
 ```elixir
 {:ok, encoded} = ExCodecs.encode(:zstd, binary, level: 3)
-```
-
-Encodes (compresses) data with the given codec and options. Returns
-`{:ok, binary}` on success or `{:error, %ExCodecs.Error{}}` on failure.
-
-### `decode/3`
-
-```elixir
 {:ok, decoded} = ExCodecs.decode(:zstd, compressed)
 ```
 
-Decodes (decompresses) data with the given codec. Returns `{:ok, binary}` on
-success or `{:error, %ExCodecs.Error{}}` on failure.
+The binary registry API is always **codec atom + binary**.
+
+### Category APIs
+
+- `ExCodecs.Compression.compress/3` — compression terminology over the binary
+  registry API.
+- `ExCodecs.Spatial.encode/2` / `decode/2` — point clouds and Gaussians
+  (struct↔format).
+
+These are specialized entry points in the same framework, sharing conventions
+such as tagged results and `%ExCodecs.Error{}`.
+
+### `encode/3` / `decode/3`
+
+First argument is always a **codec atom**. Returns `{:ok, binary}` or
+`{:error, %ExCodecs.Error{}}`.
 
 ### `available_codecs/0`
 
 ```elixir
-ExCodecs.available_codecs()  #=> [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+ExCodecs.available_codecs()          # all available catalog entries
+ExCodecs.available_codecs(:spatial) #=> [:gsplat, :ply, :spatial_binary]
 ```
 
 Returns a sorted list of codec atoms that are both registered and have a
-loaded native implementation.
+loaded implementation. Use `available_codecs/1` to filter the shared catalog
+by category.
 
 ### `supports?/1`
 
@@ -119,9 +145,9 @@ Returns `true` only if the codec is registered **and** its native NIF is loaded.
 {:ok, info} = ExCodecs.codec_info(:zstd)
 info.category       #=> :compression
 info.native?        #=> true
-info.streaming?     #=> true
+info.streaming?     #=> false  # block API only today
 info.configurable?  #=> true
-info.version        #=> approximate (e.g., "1.5.x")
+info.version        #=> backend version string
 ```
 
 Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
@@ -131,37 +157,57 @@ Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
 
 | Codec     | Category    | Configurable | Streaming | Options                                        |
 |-----------|-------------|--------------|-----------|------------------------------------------------|
-| `:zstd`   | compression | Yes           | Yes        | `level` (1-22, default 3)                     |
-| `:lz4`    | compression | No            | No         | --                                              |
-| `:snappy` | compression | No            | No         | --                                              |
-| `:bzip2`  | compression | Yes           | No         | `block_size` (1-9, default 9)                 |
-| `:blosc2` | compression | Yes           | Yes        | `cname`, `clevel` (0-9, default 5), `shuffle` (`:none` / `:byte` / `:bit`, default `:byte`), `typesize` (default 8) |
+| `:zstd`   | compression | Yes           | No         | `level` 1-22 (pure-Rust `structured-zstd`); `max_output_size` (default 256 MiB) |
+| `:lz4`    | compression | No            | No         | size-prepended `lz4_flex`; `max_output_size` |
+| `:snappy` | compression | No            | No         | `max_output_size` |
+| `:bzip2`  | compression | Yes           | No         | `block_size` 1-9; `max_output_size` |
+| `:blosc2` | compression | Yes           | No         | C-Blosc2 **chunk** only. `cname` / `clevel` / `shuffle` / `typesize`; `max_output_size` |
+
+### Spatial formats
+
+| Format            | Types                         | Notes                                              |
+|-------------------|-------------------------------|----------------------------------------------------|
+| `:ply`            | PointCloud / GaussianCloud    | ASCII or binary PLY; Gaussian PLY properties       |
+| `:spatial_binary` | PointCloud                    | Compact little-endian `EXCP` container             |
+| `:gsplat`         | GaussianCloud                 | Compact little-endian `GSPL` container             |
+
+See [Understanding Spatial Codecs](guides/understanding_spatial_codecs.md) and
+the frozen wire layouts in [docs/spatial_formats.md](docs/spatial_formats.md).
+
+### Known limitations
+
+- **Zstd** uses pure-Rust `structured-zstd`. Levels 1–22 work, but compressed
+  bytes/ratios are not guaranteed identical to C libzstd.
+- **Decompression** defaults to a **256 MiB** `max_output_size`. Raise it only
+  for trusted inputs; do not decompress untrusted payloads without a tight limit.
+- Spatial `stream_*` helpers **materialize** full payloads today.
 
 ## Architecture
 
 ExCodecs is layered as follows:
 
-1. **Public API** (`ExCodecs`) -- `encode/3`, `decode/3`, `available_codecs/0`,
-   `supports?/1`, `codec_info/1`. All consumers interact with this module.
+1. **Category APIs** — `ExCodecs` provides the binary registry API;
+   `ExCodecs.Compression` adds compression terminology; `ExCodecs.Spatial`
+   handles spatial domain types and formats.
 
-2. **Codec Behaviour** (`ExCodecs.Codec`) -- A behaviour requiring `encode/2`
-   and `decode/2` callbacks. Each codec module implements this behaviour and
-   optionally exports `__codec_info__/0` for registry metadata.
+2. **Codec Behaviour** (`ExCodecs.Codec`) — `encode/2` / `decode/2` on binaries;
+   optional `__codec_info__/0` for registry metadata.
 
-3. **Codec Registry** (`ExCodecs.CodecRegistry`) -- An ETS-backed registry
-   populated at application startup. It maps codec atoms to their implementing
-   modules and metadata. Lookups are O(1).
+3. **Shared codec catalog** (`ExCodecs.CodecRegistry`) — ETS map of codec atoms
+   to modules, categories, interface shapes, and metadata, populated at startup.
 
-4. **Native NIFs** (`ExCodecs.Native`) -- Rustler NIFs providing the actual
-   compression and decompression. Precompiled via `rustler_precompiled` for
-   cross-platform distribution; falls back to local compilation.
+4. **Native NIFs** (`ExCodecs.Native`) — pure-Rust compression via
+   `rustler_precompiled` (or local compile).
 
-5. **Category Modules** (`ExCodecs.Compression`) -- Convenience modules that
-   delegate to the public API with category-specific naming (e.g.,
-   `compress`/`decompress`).
+5. **Category discovery** — `available_codecs/0` lists the whole catalog;
+   `available_codecs/1` filters it, and
+   `ExCodecs.Spatial.available_formats/0` provides the spatial category's
+   preferred built-in order.
 
-To add a new codec: implement `ExCodecs.Codec`, add a native NIF function,
-register the codec in `ExCodecs.Application`, and the rest follows automatically.
+To add a binary codec: implement `ExCodecs.Codec`, wire a NIF if needed, and
+register it with `interface: :binary`. Spatial implementations live under
+`ExCodecs.Spatial` and register with `category: :spatial` and
+`interface: :spatial`.
 
 ## Error Handling
 
@@ -177,6 +223,9 @@ Error reasons are atoms:
 | `:compression_failed` | The underlying compression operation failed      |
 | `:decompression_failed`| The underlying decompression operation failed   |
 | `:nif_not_loaded`     | The NIF library could not be loaded              |
+| `:io_error`           | File read/write failure                          |
+| `:truncated_input`    | Incomplete binary                                |
+| `:output_limit_exceeded` | Decompress would exceed `max_output_size`     |
 
 ```elixir
 {:error, error} = ExCodecs.encode(:unknown, "data")
@@ -193,9 +242,6 @@ ExCodecs includes benchmarking utilities via [benchee](https://github.com/benche
 ```sh
 # Run all compression benchmarks
 mix benchmarks
-
-# Run a specific benchmark file
-mix bench compression
 ```
 
 Benchmarks are defined in `bench/` and run in the `:bench` environment. Results
@@ -234,7 +280,7 @@ mix docs
 
 - Elixir 1.17+
 - Erlang/OTP 26+
-- Rust 1.85+ (only required if precompiled NIFs are unavailable for your platform)
+- Rust 1.94+ (only required if precompiled NIFs are unavailable for your platform)
 
 ## License
 

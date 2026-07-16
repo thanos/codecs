@@ -7,7 +7,7 @@ ex_codecs_dep =
   if File.exists?(local_path) do
     [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
   else
-    [{:ex_codecs, "~> 0.1"}]
+    [{:ex_codecs, "~> 0.2.0"}]
   end
 
 config =
@@ -75,11 +75,11 @@ The shuffle filter is the key to Blosc2's effectiveness on array data:
 data = :binary.copy(<<1.0::float-64>>, 50_000) <> :binary.copy(<<2.0::float-64>>, 50_000)
 
 # No shuffle
-{:ok, c_none} = ExCodecs.encode(:blosc2, data, shuffle: :none)
+{:ok, c_none} = ExCodecs.encode(:blosc2, data, typesize: 8, shuffle: :none)
 # Byte shuffle - reorders bytes for better compression
-{:ok, c_byte} = ExCodecs.encode(:blosc2, data, shuffle: :byte)
+{:ok, c_byte} = ExCodecs.encode(:blosc2, data, typesize: 8, shuffle: :byte)
 # Bit shuffle - reorders bits for even better compression on some data
-{:ok, c_bit} = ExCodecs.encode(:blosc2, data, shuffle: :bit)
+{:ok, c_bit} = ExCodecs.encode(:blosc2, data, typesize: 8, shuffle: :bit)
 
 IO.puts("No shuffle:   #{byte_size(c_none)} bytes")
 IO.puts("Byte shuffle: #{byte_size(c_byte)} bytes")

@@ -38,35 +38,68 @@ defmodule ExCodecs.Native do
   @doc false
   def zstd_compress(_data, _level), do: :erlang.nif_error(:nif_not_loaded)
   @doc false
-  def zstd_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
+  def zstd_decompress(_data, _max_output_size), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   def lz4_compress(_data), do: :erlang.nif_error(:nif_not_loaded)
   @doc false
-  def lz4_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
+  def lz4_decompress(_data, _max_output_size), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   def snappy_compress(_data), do: :erlang.nif_error(:nif_not_loaded)
   @doc false
-  def snappy_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
+  def snappy_decompress(_data, _max_output_size), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   def bzip2_compress(_data, _block_size), do: :erlang.nif_error(:nif_not_loaded)
   @doc false
-  def bzip2_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
+  def bzip2_decompress(_data, _max_output_size), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   def blosc2_compress(_data, _cname, _clevel, _shuffle, _typesize),
     do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
-  def blosc2_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
+  def blosc2_decompress(_data, _max_output_size), do: :erlang.nif_error(:nif_not_loaded)
 
   @doc false
   def codec_versions, do: :erlang.nif_error(:nif_not_loaded)
 
-  @doc false
-  def nif_loaded?, do: not function_exported?(__MODULE__, :zstd_compress, 2)
+  @doc """
+  Returns `true` when the native NIF library is loaded.
+
+  The check calls the native `codec_versions/0` function and verifies that it
+  returns a map. This function is primarily useful for startup diagnostics;
+  public compression calls already convert an unavailable NIF into
+  `%ExCodecs.Error{reason: :nif_not_loaded}`.
+
+  ## Arguments
+
+  This function takes no arguments.
+
+  ## Returns
+
+    * `true` when the native library responds with its codec-version map.
+    * `false` when the NIF stub raises `ErlangError` or `ArgumentError`.
+
+  ## Raises
+
+  Expected NIF-loading errors are caught. An exception of another class raised
+  by the native implementation is not caught and propagates to the caller.
+
+  ## Example
+
+      iex> loaded? = ExCodecs.Native.nif_loaded?()
+      iex> is_boolean(loaded?)
+      true
+  """
+  @spec nif_loaded?() :: boolean()
+  def nif_loaded? do
+    is_map(codec_versions())
+  rescue
+    ErlangError -> false
+    ArgumentError -> false
+  end
 end
 
 # coveralls-ignore-stop

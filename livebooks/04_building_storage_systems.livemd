@@ -7,7 +7,7 @@ ex_codecs_dep =
   if File.exists?(local_path) do
     [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
   else
-    [{:ex_codecs, "~> 0.1"}]
+    [{:ex_codecs, "~> 0.2.0"}]
   end
 
 config =
@@ -124,7 +124,7 @@ end
 ### Using the Compressed Store
 
 ```elixir
- {:ok, _pid} = CompressedStore.start_link(codec: :zstd, level: 3)
+{:ok, _pid} = CompressedStore.start_link(codec: :zstd, opts: [level: 3])
 
 CompressedStore.put(:doc1, String.duplicate("Hello, World! ", 1000))
 CompressedStore.put(:doc2, :crypto.strong_rand_bytes(4096) |> Base.encode64())
@@ -308,6 +308,12 @@ case ExCodecs.encode(:zstd, "some data") do
   {:error, %ExCodecs.Error{reason: :unsupported_codec}} ->
     {:error, :codec_missing}
 
+  {:error, %ExCodecs.Error{reason: :codec_unavailable}} ->
+    {:error, :codec_unavailable}
+
+  {:error, %ExCodecs.Error{reason: :nif_not_loaded}} ->
+    {:error, :nif_not_loaded}
+
   {:error, %ExCodecs.Error{reason: :invalid_data} = err} ->
     IO.puts("Invalid data: #{err.message}")
     {:error, :bad_input}
@@ -315,7 +321,21 @@ case ExCodecs.encode(:zstd, "some data") do
   {:error, %ExCodecs.Error{reason: :compression_failed} = err} ->
     IO.puts("Compression failed: #{err.message}")
     {:error, :compress_failed}
+
+  {:error, %ExCodecs.Error{} = err} ->
+    IO.puts("Structured error #{err.reason}: #{err.message}")
+    {:error, err.reason}
 end
+```
+
+```elixir
+# Bound decompression for untrusted payloads (default is 256 MiB)
+{:ok, compressed} = ExCodecs.encode(:zstd, String.duplicate("x", 1024))
+
+{:error, %ExCodecs.Error{reason: :output_limit_exceeded}} =
+  ExCodecs.decode(:zstd, compressed, max_output_size: 16)
+
+{:ok, _decoded} = ExCodecs.decode(:zstd, compressed, max_output_size: 4096)
 ```
 
 ```elixir

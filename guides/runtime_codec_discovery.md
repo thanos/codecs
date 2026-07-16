@@ -1,6 +1,9 @@
 # Runtime Codec Discovery
 
-ExCodecs uses a runtime registry to discover, validate, and query available codecs. This guide explains how the registry works, how it enables graceful degradation, and how to extend it with custom codecs.
+ExCodecs uses a shared runtime catalog to discover, validate, and query binary
+and spatial codecs. This guide explains how the ETS-backed registry works, how
+it enables graceful degradation, and how to extend it with custom binary
+codecs.
 
 ## The Codec Registry
 
@@ -73,7 +76,10 @@ For an unavailable codec:
 
 The distinction between "known but unavailable" and "unknown" is important:
 
-- **Known but unavailable**: The codec is registered in the table with `module: nil`. This means the native NIF could not be loaded (e.g., unsupported platform, missing native library). `supports?/1` returns `false`, but `codec_info/1` still returns the metadata.
+- **Known but unavailable**: The codec is registered in the table with
+  `module: nil`. Its implementation could not be loaded (for compression this
+  commonly means the native NIF is unavailable). `supports?/1` returns
+  `false`, but `codec_info/1` still returns metadata.
 
 - **Unknown**: The codec name is not in the table at all. `lookup/1` returns `{:error, :unsupported_codec}`.
 
@@ -81,11 +87,17 @@ The distinction between "known but unavailable" and "unknown" is important:
 
 ### Available Codecs
 
-List all codecs that are loaded and functional:
+List all catalog entries that are loaded and functional:
 
 ```elixir
 ExCodecs.available_codecs()
+# => [:blosc2, :bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
+
+ExCodecs.available_codecs(:compression)
 # => [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+
+ExCodecs.available_codecs(:spatial)
+# => [:gsplat, :ply, :spatial_binary]
 ```
 
 This filters out codecs where the module is `nil` (unavailable). Only codecs you can actually use are included.
@@ -116,16 +128,17 @@ end
 # => %ExCodecs.Codec{
 #      name: :zstd,
 #      category: :compression,
+#      interface: :binary,
 #      module: ExCodecs.Compression.Zstd,
 #      native?: true,
-#      streaming?: true,
+#      streaming?: false,
 #      configurable?: true,
-#      version: "1.5.6"
+#      version: "structured-zstd-0.0.48"
 #    }
 
-info.streaming?     # => true
+info.streaming?     # => false
 info.configurable?  # => true
-info.version        # => "1.5.6"
+info.version        # => "structured-zstd-0.0.48"
 ```
 
 This is useful for checking codec capabilities:
@@ -146,7 +159,9 @@ ExCodecs.Compression.available_codecs()
 # => [%ExCodecs.Codec{name: :blosc2, ...}, %ExCodecs.Codec{name: :bzip2, ...}, ...]
 ```
 
-Currently, all codecs are in the `:compression` category, but the architecture supports future categories (hashing, checksums, encodings).
+Built-ins currently occupy `:compression` and `:spatial`. The `interface`
+metadata records whether operations use the top-level binary API or the
+specialized spatial API.
 
 ### Direct Lookup
 
@@ -305,11 +320,12 @@ The registry distinguishes between "all registered codecs" and "available codecs
 ```elixir
 # All codecs known to the registry (including unavailable ones)
 ExCodecs.CodecRegistry.all_codecs()
-# => [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+# => [:blosc2, :bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
 
-# Only codecs whose NIF is loaded and functional
+# Only entries whose implementation is loaded and functional
 ExCodecs.CodecRegistry.available_codecs()
-# => [:bzip2, :lz4, :snappy, :zstd]  # (blosc2 unavailable in this example)
+# => [:bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
+# (:blosc2 is unavailable in this example)
 ```
 
 The set of available codecs may change if the NIF is reloaded. In normal operation, once the NIF loads successfully, all built-in codecs are available.

@@ -1,6 +1,6 @@
 # Understanding Zstd
 
-Zstandard (Zstd) is the default codec for most use cases in ExCodecs. This guide provides a deep dive into how Zstd works, its compression levels, dictionary compression, and how to get the most out of it.
+Zstandard (Zstd) is the default codec for most use cases in ExCodecs. This guide provides a deep dive into how Zstd works, its compression levels, format capabilities, and the subset exposed by ExCodecs.
 
 ## Overview
 
@@ -20,7 +20,9 @@ Zstd compression proceeds in three phases:
 
 Zstd scans the input using a sliding window. It searches backward for the longest match to the current position and emits a `(offset, match_length)` pair. Shorter matches that are unlikely to improve compression are skipped to save time.
 
-The window size (controlled by `window_log`) determines how far back the algorithm can reference. A 2^23 = 8 MB window is the default; larger windows improve ratio on files with distant repetition.
+The sliding window size determines how far back the algorithm can reference.
+ExCodecs does not currently expose a `window_log` option; the pure-Rust backend
+uses its default window behaviour.
 
 ### Phase 2: Sequence Encoding
 
@@ -76,32 +78,38 @@ General recommendations:
 - **Levels 10-14**: Archival, batch processing, cold storage.
 - **Levels 15-22**: Extreme ratio scenarios. Only use if compression time is irrelevant.
 
-## Dictionary Compression
+## Dictionary Compression (not exposed)
 
-Zstd supports **dictionary compression** for improving ratios on small data. Normally, compression algorithms need a large enough input to build an effective dictionary. With a pre-trained dictionary, even small inputs (a few hundred bytes) can achieve significant compression.
+The Zstd format supports dictionary compression for small, structurally similar
+payloads, but **ExCodecs does not currently expose dictionary training,
+dictionary compression, or dictionary decompression options**.
 
-### How It Works
+At the format level, dictionary workflows normally:
 
 1. **Train** a dictionary on a representative sample of your data.
 2. **Compress** each small payload using the trained dictionary.
 3. **Decompress** using the same dictionary.
 
-The dictionary is typically 8-112 KB and is stored alongside or referenced by the compressed data. It captures the common patterns of your data domain, so small payloads benefit from the dictionary's knowledge.
+The dictionary is typically stored alongside or referenced by compressed data.
+Both encoder and decoder must use the same dictionary.
 
-### When to Use Dictionaries
+Potential future use cases include:
 
 - Small messages (under 100 KB) that share common structure.
 - JSON or protocol buffers with repeated schemas.
 - Log entries or metrics that follow a pattern.
 - When you control both the compression and decompression side.
 
-ExCodecs currently provides block-level compression and decompression. Dictionary support requires managing the dictionary bytes externally and passing them through a custom Codec module that wraps `ExCodecs.Native` calls with dictionary parameters.
+The current native API has no dictionary parameters, so a custom codec cannot
+obtain dictionary support merely by forwarding options to `ExCodecs.Native`.
+Use another Zstd implementation if dictionaries are required today.
 
 ## Streaming
 
 Zstd supports streaming (incremental) compression and decompression. This is useful when data is too large to fit in memory or when you need to process data as it arrives.
 
-The `streaming?: true` flag in the codec info indicates that streaming infrastructure is available in the underlying library. ExCodecs currently exposes block-level operations. Streaming support for arbitrarily large inputs may be added in future versions.
+ExCodecs currently exposes **block-level** operations only (`streaming?: false`).
+Streaming support for arbitrarily large inputs may be added in future versions.
 
 ## Zstd Frame Format
 
@@ -128,7 +136,7 @@ Properties of this format:
 
 ## Window Log
 
-The `window_log` parameter controls the maximum reference distance during compression. It is only relevant at high compression levels and for large inputs.
+Window size is not configurable in ExCodecs today (no `window_log` option).
 
 - Default: automatically determined based on the level and input size.
 - Minimum: 10 (1 KB window).
@@ -145,7 +153,7 @@ Zstd memory usage depends on the compression level and window size:
 | Compress L1 | ~8 MB (hash table + window)                       |
 | Compress L3 | ~8 MB                                             |
 | Compress L9 | ~32 MB                                            |
-| Compress L22| ~64 MB+ (depends on window_log)                  |
+| Compress L22| high (backend-dependent)                         |
 | Decompress  | ~window size (typically 8 MB, up to 128 MB+)     |
 
 On the BEAM, compression runs in a DirtyCpu NIF, so this memory is allocated outside the Erlang heap. That memory pressure still affects the system, so be aware of these numbers when running many concurrent compressions.
@@ -173,6 +181,7 @@ Zstd is strictly superior to GZIP/Deflate on both ratio and speed. It is the rec
 
 4. **Reserve levels 15-22 for batch processing.** These levels can be 5-20x slower than level 3 for modest ratio improvements (typically 2-5% additional compression).
 
-5. **Watch memory at high levels.** Levels above 15 and large `window_log` values can consume significant memory. Monitor your system under production load.
+5. **Watch memory at high levels.** Large payloads require room for input and output buffers (block API).
 
-6. **Consider dictionary compression for small payloads.** If you are compressing many small messages with shared structure, a trained dictionary can double or triple compression ratios.
+6. **Do not pass dictionary options.** They are not implemented by ExCodecs.
+   Evaluate another Zstd implementation when dictionary compression is required.

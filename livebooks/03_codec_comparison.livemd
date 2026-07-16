@@ -7,7 +7,7 @@ ex_codecs_dep =
   if File.exists?(local_path) do
     [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
   else
-    [{:ex_codecs, "~> 0.1"}]
+    [{:ex_codecs, "~> 0.2.0"}]
   end
 
 config =
@@ -59,7 +59,10 @@ end
 
 ```elixir
 compression_results = for {dname, data} <- datasets, codec <- codecs do
-  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte], else: []
+  opts =
+    if codec == :blosc2,
+      do: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8],
+      else: []
   {:ok, enc} = ExCodecs.encode(codec, data, opts)
   %{
     dataset: dname,
@@ -104,7 +107,10 @@ VegaLite.new(width: 700, height: 350)
 iterations = 20
 
 speed_results = for {dname, data} <- datasets, codec <- codecs do
-  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte], else: []
+  opts =
+    if codec == :blosc2,
+      do: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8],
+      else: []
   {:ok, enc} = ExCodecs.encode(codec, data, opts)
 
   {enc_time, _} = :timer.tc(fn ->
@@ -159,7 +165,10 @@ VegaLite.new(width: 700, height: 350)
 
 ```elixir
 memory_results = for codec <- codecs do
-  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte], else: []
+  opts =
+    if codec == :blosc2,
+      do: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8],
+      else: []
   {:ok, info} = ExCodecs.codec_info(codec)
 
   mem_before = Process.info(self(), :heap_size) |> elem(1)
@@ -238,7 +247,7 @@ recommendation = case {use_case_val, data_type_val} do
   {:tiny, _} -> {:snappy, "Low overhead even on very small payloads. No configuration needed."}
   {:ratio, :array} -> {:blosc2, "Shuffle+compress gives best ratios on typed arrays."}
   {:ratio, _} -> {:bzip2, "Highest compression ratio for general data. Slow but compact."}
-  {:numeric, _} -> {:blosc2, "Purpose-built for numerical data with shuffle filters and threading."}
+  {:numeric, _} -> {:blosc2, "Purpose-built for numerical data with shuffle filters."}
   {:balanced, :array} -> {:blosc2, "Good ratio on typed data with decent speed."}
   {:balanced, _} -> {:zstd, "Best all-around codec. Configurable from fast (level 1) to compact (level 22)."}
 end
@@ -253,9 +262,9 @@ IO.puts("Streaming: #{info.streaming?}")
 
 default_opts = case codec do
   :zstd -> [level: 3]
-  :lz4 -> [level: 1]
+  :lz4 -> []
   :bzip2 -> [block_size: 9]
-  :blosc2 -> [cname: :zstd, clevel: 5, shuffle: :byte]
+  :blosc2 -> [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8]
   :snappy -> []
 end
 IO.puts("Suggested options: #{inspect(default_opts)}")
@@ -293,11 +302,11 @@ IO.puts(flowchart)
 | ------------ | ------------ | ---------- | ------------ | ----------- | ------------- |
 | Speed        | Very Fast    | Very Fast  | Fast         | Slow        | Medium        |
 | Ratio        | Low          | Low        | High         | Very High   | High (arrays) |
-| Configurable | Level 1–16 | No         | Level 1–22 | Block 1–9 | Many options  |
-| Streaming    | No           | No         | Yes          | No          | Yes           |
+| Configurable | Fixed profile | No         | Level 1–22 | Block 1–9 | Codec/shuffle |
+| Streaming    | No           | No         | No           | No          | No            |
 | Best For     | Hot paths    | Short data | General      | Archival    | Arrays        |
 | Shuffle      | —          | —        | —          | —         | Byte/Bit      |
-| Multi-thread | No           | No         | No           | No          | Yes           |
+| Multi-thread | No           | No         | No           | No          | No            |
 
 ## Next Steps
 

@@ -149,9 +149,35 @@ defmodule ExCodecs.Compression.Blosc2Test do
       assert info.name == :blosc2
       assert info.category == :compression
       assert info.configurable? == true
-      assert info.streaming? == true
+      assert info.streaming? == false
       assert info.native? == true
       assert is_binary(info.version)
+    end
+  end
+
+  describe "c-blosc2 cnames" do
+    test "accepts blosclz and lz4hc" do
+      data = :crypto.strong_rand_bytes(1024)
+
+      assert {:ok, c} = Blosc2.encode(data, cname: :blosclz, shuffle: :none)
+      assert {:ok, ^data} = Blosc2.decode(c, [])
+
+      assert {:ok, c} = Blosc2.encode(data, cname: :lz4hc, shuffle: :none)
+      assert {:ok, ^data} = Blosc2.decode(c, [])
+    end
+
+    test "round-trips official cnames" do
+      data = :crypto.strong_rand_bytes(2048)
+
+      for cname <- [:blosclz, :lz4, :lz4hc, :zlib, :zstd] do
+        assert {:ok, compressed} = Blosc2.encode(data, cname: cname, shuffle: :none, typesize: 1)
+        assert {:ok, ^data} = Blosc2.decode(compressed, [])
+      end
+    end
+
+    test "rejects snappy" do
+      assert {:error, %ExCodecs.Error{reason: :invalid_options}} =
+               Blosc2.encode("data", cname: :snappy)
     end
   end
 end

@@ -11,7 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  RUST_VERSION: "1.85"
+  # Must satisfy native/ex_codecs_native/Cargo.toml `rust-version`.
+  # structured-zstd calls the now-safe __cpuid without an unsafe block on
+  # x86_64, which needs rustc >= 1.94 (its own 1.92 MSRV metadata is wrong).
+  RUST_VERSION: "1.94"
 
 jobs:
   test:

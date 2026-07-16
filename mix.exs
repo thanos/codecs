@@ -1,7 +1,7 @@
 defmodule ExCodecs.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.2.0"
   @source_url "https://github.com/thanos/codecs"
 
   def project do
@@ -19,7 +19,7 @@ defmodule ExCodecs.MixProject do
       test_coverage: [
         tool: ExCoveralls,
         ignore_modules: [ExCodecs.Native],
-        threshold: 90
+        threshold: 95
       ],
       preferred_cli_env: [
         coveralls: :test,
@@ -71,7 +71,8 @@ defmodule ExCodecs.MixProject do
 
   defp package do
     [
-      description: "An extensible BEAM-native codec framework for Elixir",
+      description:
+        "An extensible BEAM-native codec framework for Elixir — compression and spatial formats",
       licenses: ["Apache-2.0"],
       links: %{
         "GitHub" => @source_url,
@@ -84,6 +85,9 @@ defmodule ExCodecs.MixProject do
         "native/ex_codecs_native/Cargo.toml",
         "native/ex_codecs_native/Cargo.lock",
         "priv",
+        "guides",
+        "livebooks",
+        "docs",
         "checksum-*.exs",
         "mix.exs",
         "README.md",
@@ -97,7 +101,15 @@ defmodule ExCodecs.MixProject do
       main: "ExCodecs",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras: Path.wildcard("guides/**/*.md") ++ Path.wildcard("livebooks/**/*.livemd")
+      extras:
+        Path.wildcard("guides/**/*.md") ++
+          Path.wildcard("livebooks/**/*.livemd") ++
+          ["docs/spatial_formats.md"],
+      groups_for_extras: [
+        Guides: ~r"guides/",
+        Livebooks: ~r"livebooks/",
+        "Architecture & formats": ~r"docs/"
+      ]
     ]
   end
 
