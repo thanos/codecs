@@ -3,7 +3,9 @@ name = "ex_codecs_native"
 version = "0.2.0"
 authors = ["ExCodecs Team"]
 edition = "2021"
-rust-version = "1.92"
+# structured-zstd declares MSRV 1.92 but calls the now-safe __cpuid without
+# an unsafe block on x86_64, which requires rustc >= 1.94 (E0133 on older).
+rust-version = "1.94"
 
 [lib]
 name = "ex_codecs_native"

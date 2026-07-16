@@ -58,7 +58,7 @@ Precompiled NIF binaries are available for macOS (Intel and ARM64), Linux
 automatically from the [GitHub releases](https://github.com/thanos/codecs/releases)
 when you run `mix deps.get`. If a precompiled artifact is not available for your
 target, ExCodecs falls back to compiling the Rust NIF from source (requires
-Rust 1.92+). The native crate is **pure Rust** (no C toolchain / system
+Rust 1.94+). The native crate is **pure Rust** (no C toolchain / system
 compression libraries).
 
 ## Quick Start
@@ -280,7 +280,7 @@ mix docs
 
 - Elixir 1.17+
 - Erlang/OTP 26+
-- Rust 1.92+ (only required if precompiled NIFs are unavailable for your platform)
+- Rust 1.94+ (only required if precompiled NIFs are unavailable for your platform)
 
 ## License
 
