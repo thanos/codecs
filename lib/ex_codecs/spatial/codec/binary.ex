@@ -129,6 +129,13 @@ defmodule ExCodecs.Spatial.Codec.Binary do
       a `%Point{}`
     * `{:error, %ExCodecs.Error{reason: :io_error}}` on file failures
 
+  ## Raises / exceptions
+
+  Schema and non-`%Point{}` element failures are returned. Invalid path terms or
+  non-keyword `opts` can raise `FunctionClauseError` or `ArgumentError` in the
+  path/file/keyword APIs. Malformed point field shapes can raise during
+  bitstring construction (same class of exceptions as `encode/2`).
+
   ## Examples
 
       iex> alias ExCodecs.Spatial.{Point, Codec.Binary}
@@ -190,13 +197,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
     color? = alpha? or schema_flag?(schema, :color)
     normal? = schema_flag?(schema, :normal)
 
-    unknown =
-      schema
-      |> Enum.reject(fn
-        a when is_atom(a) -> a in [:color, :alpha, :normal]
-        {k, _} when is_atom(k) -> k in [:color, :alpha, :normal]
-        _ -> false
-      end)
+    unknown = Enum.reject(schema, &known_excp_schema_entry?/1)
 
     if unknown != [] do
       {:error,
@@ -220,6 +221,10 @@ defmodule ExCodecs.Spatial.Codec.Binary do
        message: "EXCP schema must be a list or map, got: #{inspect(other)}"
      )}
   end
+
+  defp known_excp_schema_entry?(entry) when entry in [:color, :alpha, :normal], do: true
+  defp known_excp_schema_entry?({key, _}) when key in [:color, :alpha, :normal], do: true
+  defp known_excp_schema_entry?(_), do: false
 
   defp flags_from_schema(color?, alpha?, normal?) do
     0
@@ -564,13 +569,21 @@ defmodule ExCodecs.Spatial.Codec.Binary do
     xyz <> color <> normal
   end
 
-  defp normalize_rgb(nil), do: {0, 0, 0}
-  defp normalize_rgb({r, g, b}), do: {trunc(r), trunc(g), trunc(b)}
-  defp normalize_rgb({r, g, b, _a}), do: {trunc(r), trunc(g), trunc(b)}
+  defp normalize_rgb(color) do
+    case color do
+      nil -> {0, 0, 0}
+      {r, g, b} -> {trunc(r), trunc(g), trunc(b)}
+      {r, g, b, _a} -> {trunc(r), trunc(g), trunc(b)}
+    end
+  end
 
-  defp normalize_rgba(nil), do: {0, 0, 0, 255}
-  defp normalize_rgba({r, g, b}), do: {trunc(r), trunc(g), trunc(b), 255}
-  defp normalize_rgba({r, g, b, a}), do: {trunc(r), trunc(g), trunc(b), trunc(a)}
+  defp normalize_rgba(color) do
+    case color do
+      nil -> {0, 0, 0, 255}
+      {r, g, b} -> {trunc(r), trunc(g), trunc(b), 255}
+      {r, g, b, a} -> {trunc(r), trunc(g), trunc(b), trunc(a)}
+    end
+  end
 
   defp decode_points(bin, 0, _flags), do: {:ok, [], bin}
 

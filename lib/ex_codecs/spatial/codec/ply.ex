@@ -972,13 +972,10 @@ defmodule ExCodecs.Spatial.Codec.PLY do
         buf = acc <> data
         match_or_continue_header(io, buf)
 
-      :eof ->
-        header_eof_error(acc)
-
       {:error, reason} ->
         ply_io_error(reason)
 
-      _other ->
+      _eof_or_empty ->
         header_eof_error(acc)
     end
   end
@@ -1005,23 +1002,10 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
-  defp header_eof_error("") do
+  defp header_eof_error(_acc) do
+    # Acc never contains a complete end_header here: that case is handled in
+    # match_or_continue_header/2 while chunks are still arriving.
     {:error, Error.new(:invalid_data, codec: :ply, message: "PLY header missing end_header")}
-  end
-
-  defp header_eof_error(acc) do
-    case :binary.match(acc, "end_header") do
-      {pos, len} ->
-        header = binary_part(acc, 0, pos + len)
-        rest = binary_part(acc, pos + len, byte_size(acc) - pos - len)
-
-        with {:ok, parsed} <- parse_header(header) do
-          {:ok, parsed, strip_leading_newlines(rest)}
-        end
-
-      :nomatch ->
-        {:error, Error.new(:invalid_data, codec: :ply, message: "PLY header missing end_header")}
-    end
   end
 
   defp next_ply_stream_item({:ok, {:binary, io, _buf, _endian, parsed, _as, _stride, i}})
@@ -1079,16 +1063,11 @@ defmodule ExCodecs.Spatial.Codec.PLY do
       data when is_binary(data) and byte_size(data) > 0 ->
         take_exact_bytes(io, buf <> data, n)
 
-      :eof ->
-        {:error,
-         Error.new(:invalid_data, codec: :ply, message: "Binary PLY body too short")}
-
-      data when is_binary(data) ->
-        {:error,
-         Error.new(:invalid_data, codec: :ply, message: "Binary PLY body too short")}
-
       {:error, reason} ->
         ply_io_error(reason)
+
+      _eof_or_short ->
+        {:error, Error.new(:invalid_data, codec: :ply, message: "Binary PLY body too short")}
     end
   end
 
@@ -1111,7 +1090,10 @@ defmodule ExCodecs.Spatial.Codec.PLY do
       data when is_binary(data) and byte_size(data) > 0 ->
         take_ascii_vertex_line(io, buf <> data)
 
-      :eof ->
+      {:error, reason} ->
+        ply_io_error(reason)
+
+      _eof_or_empty ->
         trimmed = String.trim(buf)
 
         if trimmed == "" do
@@ -1123,16 +1105,6 @@ defmodule ExCodecs.Spatial.Codec.PLY do
         else
           {:ok, trimmed, ""}
         end
-
-      {:error, reason} ->
-        ply_io_error(reason)
-
-      _other ->
-        {:error,
-         Error.new(:invalid_data,
-           codec: :ply,
-           message: "Expected more ASCII vertices"
-         )}
     end
   end
 

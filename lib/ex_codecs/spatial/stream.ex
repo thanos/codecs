@@ -247,30 +247,33 @@ defmodule ExCodecs.Spatial.Stream do
 
   defp stream_encode_to_file_if_schema(data, path, opts) do
     if Keyword.has_key?(opts, :schema) do
-      case Keyword.get(opts, :format) do
-        :spatial_binary ->
-          Binary.stream_encode_to_file(enumerable_points(data), path, opts)
-
-        :gsplat ->
-          Gsplat.stream_encode_to_file(enumerable_gaussians(data), path, opts)
-
-        other when other in [:ply, nil] ->
-          {:error,
-           Error.new(:invalid_options,
-             message:
-               "encode_to_file schema streaming requires format: :spatial_binary or :gsplat"
-           )}
-
-        other ->
-          {:error,
-           Error.new(:unsupported_codec,
-             codec: other,
-             message: "Unsupported spatial stream format: #{inspect(other)}"
-           )}
-      end
+      stream_encode_by_format(Keyword.get(opts, :format), data, path, opts)
     else
       :not_streaming
     end
+  end
+
+  defp stream_encode_by_format(:spatial_binary, data, path, opts) do
+    Binary.stream_encode_to_file(enumerable_points(data), path, opts)
+  end
+
+  defp stream_encode_by_format(:gsplat, data, path, opts) do
+    Gsplat.stream_encode_to_file(enumerable_gaussians(data), path, opts)
+  end
+
+  defp stream_encode_by_format(other, _data, _path, _opts) when other in [:ply, nil] do
+    {:error,
+     Error.new(:invalid_options,
+       message: "encode_to_file schema streaming requires format: :spatial_binary or :gsplat"
+     )}
+  end
+
+  defp stream_encode_by_format(other, _data, _path, _opts) do
+    {:error,
+     Error.new(:unsupported_codec,
+       codec: other,
+       message: "Unsupported spatial stream format: #{inspect(other)}"
+     )}
   end
 
   defp enumerable_points(%PointCloud{points: points}), do: points

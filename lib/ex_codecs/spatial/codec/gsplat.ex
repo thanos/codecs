@@ -118,6 +118,13 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
       a `%Gaussian{}`
     * `{:error, %ExCodecs.Error{reason: :io_error}}` on file failures
 
+  ## Raises / exceptions
+
+  Schema and non-`%Gaussian{}` element failures are returned. Invalid path terms
+  or non-keyword `opts` can raise `FunctionClauseError` or `ArgumentError` in
+  the path/file/keyword APIs. Malformed Gaussian field shapes can raise during
+  bitstring construction (same class of exceptions as `encode/2`).
+
   ## Examples
 
       iex> alias ExCodecs.Spatial.{Gaussian, Codec.Gsplat}
@@ -178,14 +185,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   defp schema_to_sh_rest(schema) when is_list(schema) do
     sh_rest = Keyword.get(schema, :sh_rest, 0)
-
-    unknown =
-      schema
-      |> Enum.reject(fn
-        {:sh_rest, _} -> true
-        :sh_rest -> true
-        _ -> false
-      end)
+    unknown = Enum.reject(schema, &known_gspl_schema_entry?/1)
 
     cond do
       unknown != [] ->
@@ -218,6 +218,10 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
        message: "GSPL schema must be a list or map, got: #{inspect(other)}"
      )}
   end
+
+  defp known_gspl_schema_entry?(:sh_rest), do: true
+  defp known_gspl_schema_entry?({:sh_rest, _}), do: true
+  defp known_gspl_schema_entry?(_), do: false
 
   defp gspl_header(flags, count, sh_rest) do
     <<@magic::binary, @version::little-unsigned-16, flags::little-unsigned-16,
