@@ -171,8 +171,8 @@ Returns a structured `%ExCodecs.Codec{}` struct with metadata, or
 | `:spatial_binary` | PointCloud                    | Compact little-endian `EXCP` container             |
 | `:gsplat`         | GaussianCloud                 | Compact little-endian `GSPL` container             |
 
-See [Understanding Spatial Codecs](guides/understanding_spatial_codecs.md) and
-the frozen wire layouts in [docs/spatial_formats.md](docs/spatial_formats.md).
+See [Understanding Spatial Codecs](https://hexdocs.pm/ex_codecs/understanding_spatial_codecs.html)
+and the frozen [Spatial wire formats](https://hexdocs.pm/ex_codecs/spatial_formats.html).
 
 ### Known limitations
 
