@@ -1,27 +1,38 @@
+<!-- livebook:{"persist_outputs":true} -->
+
 # Codec Comparison
 
 ```elixir
-local_path = Path.join(__DIR__, "../mix.exs")
+# Use this install to work with the source code
+# Mix.install(
+#   [
+#     {:ex_codecs, path: Path.join(__DIR__, "..")}, 
+#     {:rustler, "~> 0.36"},
+#     {:jason, "~> 1.4"}, 
+#     {:kino, "~> 0.14"}, 
+#     {:kino_vega_lite, "~> 0.1.13"}
+#   ],
+#   config:  [rustler_precompiled: [force_build: [ex_codecs: true]]]
+# )
 
-ex_codecs_dep =
-  if File.exists?(local_path) do
-    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
-  else
-    [{:ex_codecs, "~> 0.2.0"}]
-  end
-
-config =
-  if File.exists?(local_path) do
-    [rustler_precompiled: [force_build: [ex_codecs: true]]]
-  else
-    []
-  end
-
-Mix.install(
-  ex_codecs_dep ++ [{:jason, "~> 1.4"}, {:kino, "~> 0.14"}, {:kino_vega_lite, "~> 0.1.13"}],
-  config: config
-)
+Mix.install( [
+    {:ex_codecs, "~> 0.2"}, 
+    {:jason, "~> 1.4"}, 
+    {:kino, "~> 0.14"}, 
+    {:kino_vega_lite, "~> 0.1.13"}
+  ])
 ```
+
+## Series
+
+| #   | Livebook                                                       |
+| --- | -------------------------------------------------------------- |
+| 01  | [Introduction](01_introduction.livemd)                         |
+| 02  | [Compression Fundamentals](02_compression_fundamentals.livemd) |
+| 03  | **Codec Comparison** (you are here)                            |
+| 04  | [Building Storage Systems](04_building_storage_systems.livemd) |
+| 05  | [Zarr-Style Workloads](05_zarr_style_workloads.livemd)         |
+| 06  | [Spatial Codecs](06_spatial_codecs.livemd)                     |
 
 ## Setup: Test Datasets
 
@@ -55,6 +66,22 @@ for {name, size} <- dataset_sizes do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Dataset sizes:
+  Float64 array        65536 bytes
+  Random bytes         65536 bytes
+  Repetitive text      90000 bytes
+  Semi-structured      210317 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok, :ok]
+```
+
 ## Compression Ratio Benchmarks
 
 ```elixir
@@ -77,6 +104,12 @@ end
 Kino.DataTable.new(compression_results)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```text
+[%{compressed: 32804, original: 65536, codec: ":lz4", dataset: "Float64 array", ratio_pct: 50.1, savings_pct: 49.9}, %{compressed: 32691, original: 65536, codec: ":snappy", dataset: "Float64 array", ratio_pct: 49.9, savings_pct: 50.1}, %{compressed: 8413, original: 65536, codec: ":zstd", dataset: "Float64 array", ratio_pct: 12.8, savings_pct: 87.2}, %{compressed: 5590, original: 65536, codec: ":bzip2", dataset: "Float64 array", ratio_pct: 8.5, savings_pct: 91.5}, %{compressed: 962, original: 65536, codec: ":blosc2", dataset: "Float64 array", ratio_pct: 1.5, savings_pct: 98.5}, %{compressed: 65798, original: 65536, codec: ":lz4", dataset: "Random bytes", ratio_pct: 100.4, savings_pct: -0.4}, %{compressed: 65542, original: 65536, codec: ":snappy", dataset: "Random bytes", ratio_pct: 100.0, savings_pct: -0.0}, %{compressed: 65546, original: 65536, codec: ":zstd", dataset: "Random bytes", ratio_pct: 100.0, savings_pct: -0.0}, %{compressed: 66164, original: 65536, codec: ":bzip2", dataset: "Random bytes", ratio_pct: 101.0, savings_pct: -1.0}, %{compressed: 65568, original: 65536, codec: ":blosc2", dataset: "Random bytes", ratio_pct: 100.0, savings_pct: -0.0}, %{compressed: 413, original: 90000, codec: ":lz4", dataset: "Repetitive text", ratio_pct: 0.5, savings_pct: 99.5}, %{compressed: 4313, original: 90000, codec: ":snappy", dataset: "Repetitive text", ratio_pct: 4.8, savings_pct: 95.2}, %{compressed: 67, original: 90000, codec: ":zstd", dataset: "Repetitive text", ratio_pct: 0.1, savings_pct: 99.9}, %{compressed: 175, original: 90000, codec: ":bzip2", dataset: "Repetitive text", ratio_pct: 0.2, savings_pct: 99.8}, %{compressed: 580, ...}, ...]
+```
+
 ### Compression Ratio Chart
 
 ```elixir
@@ -89,6 +122,12 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```vega-lite
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"values":[{"codec":":lz4","compressed":32804,"dataset":"Float64 array","original":65536,"ratio_pct":50.1,"savings_pct":49.9},{"codec":":snappy","compressed":32691,"dataset":"Float64 array","original":65536,"ratio_pct":49.9,"savings_pct":50.1},{"codec":":zstd","compressed":8413,"dataset":"Float64 array","original":65536,"ratio_pct":12.8,"savings_pct":87.2},{"codec":":bzip2","compressed":5590,"dataset":"Float64 array","original":65536,"ratio_pct":8.5,"savings_pct":91.5},{"codec":":blosc2","compressed":962,"dataset":"Float64 array","original":65536,"ratio_pct":1.5,"savings_pct":98.5},{"codec":":lz4","compressed":65798,"dataset":"Random bytes","original":65536,"ratio_pct":100.4,"savings_pct":-0.4},{"codec":":snappy","compressed":65542,"dataset":"Random bytes","original":65536,"ratio_pct":100.0,"savings_pct":-0.0},{"codec":":zstd","compressed":65546,"dataset":"Random bytes","original":65536,"ratio_pct":100.0,"savings_pct":-0.0},{"codec":":bzip2","compressed":66164,"dataset":"Random bytes","original":65536,"ratio_pct":101.0,"savings_pct":-1.0},{"codec":":blosc2","compressed":65568,"dataset":"Random bytes","original":65536,"ratio_pct":100.0,"savings_pct":-0.0},{"codec":":lz4","compressed":413,"dataset":"Repetitive text","original":90000,"ratio_pct":0.5,"savings_pct":99.5},{"codec":":snappy","compressed":4313,"dataset":"Repetitive text","original":90000,"ratio_pct":4.8,"savings_pct":95.2},{"codec":":zstd","compressed":67,"dataset":"Repetitive text","original":90000,"ratio_pct":0.1,"savings_pct":99.9},{"codec":":bzip2","compressed":175,"dataset":"Repetitive text","original":90000,"ratio_pct":0.2,"savings_pct":99.8},{"codec":":blosc2","compressed":580,"dataset":"Repetitive text","original":90000,"ratio_pct":0.6,"savings_pct":99.4},{"codec":":lz4","compressed":55047,"dataset":"Semi-structured","original":210317,"ratio_pct":26.2,"savings_pct":73.8},{"codec":":snappy","compressed":52160,"dataset":"Semi-structured","original":210317,"ratio_pct":24.8,"savings_pct":75.2},{"codec":":zstd","compressed":25886,"dataset":"Semi-structured","original":210317,"ratio_pct":12.3,"savings_pct":87.7},{"codec":":bzip2","compressed":19018,"dataset":"Semi-structured","original":210317,"ratio_pct":9.0,"savings_pct":91.0},{"codec":":blosc2","compressed":45137,"dataset":"Semi-structured","original":210317,"ratio_pct":21.5,"savings_pct":78.5}]},"encoding":{"color":{"field":"codec","type":"nominal"},"column":{"field":"dataset","type":"nominal"},"x":{"field":"codec","sort":["lz4","snappy","zstd","bzip2","blosc2"],"type":"nominal"},"y":{"field":"ratio_pct","scale":{"domain":[0,110]},"title":"Compressed Size (%)","type":"quantitative"}},"height":350,"mark":"bar","width":700}
+```
+
 ### Space Savings Chart
 
 ```elixir
@@ -99,6 +138,12 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:y, "savings_pct", type: :quantitative, title: "Space Saved (%)")
 |> VegaLite.encode_field(:color, "codec", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
+```
+
+<!-- livebook:{"output":true} -->
+
+```vega-lite
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"values":[{"codec":":lz4","compressed":32804,"dataset":"Float64 array","original":65536,"ratio_pct":50.1,"savings_pct":49.9},{"codec":":snappy","compressed":32691,"dataset":"Float64 array","original":65536,"ratio_pct":49.9,"savings_pct":50.1},{"codec":":zstd","compressed":8413,"dataset":"Float64 array","original":65536,"ratio_pct":12.8,"savings_pct":87.2},{"codec":":bzip2","compressed":5590,"dataset":"Float64 array","original":65536,"ratio_pct":8.5,"savings_pct":91.5},{"codec":":blosc2","compressed":962,"dataset":"Float64 array","original":65536,"ratio_pct":1.5,"savings_pct":98.5},{"codec":":lz4","compressed":65798,"dataset":"Random bytes","original":65536,"ratio_pct":100.4,"savings_pct":-0.4},{"codec":":snappy","compressed":65542,"dataset":"Random bytes","original":65536,"ratio_pct":100.0,"savings_pct":-0.0},{"codec":":zstd","compressed":65546,"dataset":"Random bytes","original":65536,"ratio_pct":100.0,"savings_pct":-0.0},{"codec":":bzip2","compressed":66164,"dataset":"Random bytes","original":65536,"ratio_pct":101.0,"savings_pct":-1.0},{"codec":":blosc2","compressed":65568,"dataset":"Random bytes","original":65536,"ratio_pct":100.0,"savings_pct":-0.0},{"codec":":lz4","compressed":413,"dataset":"Repetitive text","original":90000,"ratio_pct":0.5,"savings_pct":99.5},{"codec":":snappy","compressed":4313,"dataset":"Repetitive text","original":90000,"ratio_pct":4.8,"savings_pct":95.2},{"codec":":zstd","compressed":67,"dataset":"Repetitive text","original":90000,"ratio_pct":0.1,"savings_pct":99.9},{"codec":":bzip2","compressed":175,"dataset":"Repetitive text","original":90000,"ratio_pct":0.2,"savings_pct":99.8},{"codec":":blosc2","compressed":580,"dataset":"Repetitive text","original":90000,"ratio_pct":0.6,"savings_pct":99.4},{"codec":":lz4","compressed":55047,"dataset":"Semi-structured","original":210317,"ratio_pct":26.2,"savings_pct":73.8},{"codec":":snappy","compressed":52160,"dataset":"Semi-structured","original":210317,"ratio_pct":24.8,"savings_pct":75.2},{"codec":":zstd","compressed":25886,"dataset":"Semi-structured","original":210317,"ratio_pct":12.3,"savings_pct":87.7},{"codec":":bzip2","compressed":19018,"dataset":"Semi-structured","original":210317,"ratio_pct":9.0,"savings_pct":91.0},{"codec":":blosc2","compressed":45137,"dataset":"Semi-structured","original":210317,"ratio_pct":21.5,"savings_pct":78.5}]},"encoding":{"color":{"field":"codec","type":"nominal"},"column":{"field":"dataset","type":"nominal"},"x":{"field":"codec","sort":["lz4","snappy","zstd","bzip2","blosc2"],"type":"nominal"},"y":{"field":"savings_pct","title":"Space Saved (%)","type":"quantitative"}},"height":350,"mark":"bar","width":700}
 ```
 
 ## Speed Benchmarks
@@ -137,6 +182,12 @@ end
 Kino.DataTable.new(speed_results)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```text
+[%{codec: ":lz4", dataset: "Float64 array", encode_time_us: 204, decode_time_us: 64, encode_mbps: 320.3, decode_mbps: 1009.0}, %{codec: ":snappy", dataset: "Float64 array", encode_time_us: 147, decode_time_us: 99, encode_mbps: 445.4, decode_mbps: 659.3}, %{codec: ":zstd", dataset: "Float64 array", encode_time_us: 438, decode_time_us: 175, encode_mbps: 149.4, decode_mbps: 373.1}, %{codec: ":bzip2", dataset: "Float64 array", encode_time_us: 3245, decode_time_us: 749, encode_mbps: 20.2, decode_mbps: 87.5}, %{codec: ":blosc2", dataset: "Float64 array", encode_time_us: 56, decode_time_us: 46, encode_mbps: 1158.9, decode_mbps: 1395.9}, %{codec: ":lz4", dataset: "Random bytes", encode_time_us: 22, decode_time_us: 18, encode_mbps: 2887.0, decode_mbps: 3486.0}, %{codec: ":snappy", dataset: "Random bytes", encode_time_us: 16, decode_time_us: 14, encode_mbps: 3912.6, decode_mbps: 4567.0}, %{codec: ":zstd", dataset: "Random bytes", encode_time_us: 17, decode_time_us: 21, encode_mbps: 3821.3, decode_mbps: 3055.3}, %{codec: ":bzip2", dataset: "Random bytes", encode_time_us: 5903, decode_time_us: 2552, encode_mbps: 11.1, decode_mbps: 25.7}, %{codec: ":blosc2", dataset: "Random bytes", encode_time_us: 231, decode_time_us: 19, encode_mbps: 283.6, decode_mbps: 3431.2}, %{codec: ":lz4", dataset: "Repetitive text", encode_time_us: 16, decode_time_us: 22, encode_mbps: 5405.4, decode_mbps: 4008.9}, %{codec: ":snappy", dataset: "Repetitive text", encode_time_us: 18, decode_time_us: 22, encode_mbps: 4800.0, decode_mbps: 3921.6}, %{codec: ":zstd", dataset: "Repetitive text", encode_time_us: 20, decode_time_us: 23, encode_mbps: 4379.6, decode_mbps: 3862.7}, %{codec: ":bzip2", dataset: "Repetitive text", encode_time_us: 7834, decode_time_us: 490, encode_mbps: 11.5, decode_mbps: 183.5}, %{codec: ":blosc2", ...}, ...]
+```
+
 ### Encode Speed Chart
 
 ```elixir
@@ -149,6 +200,12 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```vega-lite
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"values":[{"codec":":lz4","dataset":"Float64 array","decode_mbps":1009.0,"decode_time_us":64,"encode_mbps":320.3,"encode_time_us":204},{"codec":":snappy","dataset":"Float64 array","decode_mbps":659.3,"decode_time_us":99,"encode_mbps":445.4,"encode_time_us":147},{"codec":":zstd","dataset":"Float64 array","decode_mbps":373.1,"decode_time_us":175,"encode_mbps":149.4,"encode_time_us":438},{"codec":":bzip2","dataset":"Float64 array","decode_mbps":87.5,"decode_time_us":749,"encode_mbps":20.2,"encode_time_us":3245},{"codec":":blosc2","dataset":"Float64 array","decode_mbps":1395.9,"decode_time_us":46,"encode_mbps":1158.9,"encode_time_us":56},{"codec":":lz4","dataset":"Random bytes","decode_mbps":3486.0,"decode_time_us":18,"encode_mbps":2887.0,"encode_time_us":22},{"codec":":snappy","dataset":"Random bytes","decode_mbps":4567.0,"decode_time_us":14,"encode_mbps":3912.6,"encode_time_us":16},{"codec":":zstd","dataset":"Random bytes","decode_mbps":3055.3,"decode_time_us":21,"encode_mbps":3821.3,"encode_time_us":17},{"codec":":bzip2","dataset":"Random bytes","decode_mbps":25.7,"decode_time_us":2552,"encode_mbps":11.1,"encode_time_us":5903},{"codec":":blosc2","dataset":"Random bytes","decode_mbps":3431.2,"decode_time_us":19,"encode_mbps":283.6,"encode_time_us":231},{"codec":":lz4","dataset":"Repetitive text","decode_mbps":4008.9,"decode_time_us":22,"encode_mbps":5405.4,"encode_time_us":16},{"codec":":snappy","dataset":"Repetitive text","decode_mbps":3921.6,"decode_time_us":22,"encode_mbps":4.8e3,"encode_time_us":18},{"codec":":zstd","dataset":"Repetitive text","decode_mbps":3862.7,"decode_time_us":23,"encode_mbps":4379.6,"encode_time_us":20},{"codec":":bzip2","dataset":"Repetitive text","decode_mbps":183.5,"decode_time_us":490,"encode_mbps":11.5,"encode_time_us":7834},{"codec":":blosc2","dataset":"Repetitive text","decode_mbps":1435.4,"decode_time_us":62,"encode_mbps":1537.1,"encode_time_us":58},{"codec":":lz4","dataset":"Semi-structured","decode_mbps":2009.7,"decode_time_us":104,"encode_mbps":1013.3,"encode_time_us":207},{"codec":":snappy","dataset":"Semi-structured","decode_mbps":1625.3,"decode_time_us":129,"encode_mbps":994.9,"encode_time_us":211},{"codec":":zstd","dataset":"Semi-structured","decode_mbps":789.6,"decode_time_us":266,"encode_mbps":335.3,"encode_time_us":627},{"codec":":bzip2","dataset":"Semi-structured","decode_mbps":87.6,"decode_time_us":2400,"encode_mbps":27.3,"encode_time_us":7705},{"codec":":blosc2","dataset":"Semi-structured","decode_mbps":682.6,"decode_time_us":308,"encode_mbps":45.8,"encode_time_us":4587}]},"encoding":{"color":{"field":"codec","type":"nominal"},"column":{"field":"dataset","type":"nominal"},"x":{"field":"codec","sort":["lz4","snappy","zstd","bzip2","blosc2"],"type":"nominal"},"y":{"field":"encode_time_us","title":"Encode Time (µs)","type":"quantitative"}},"height":350,"mark":"bar","width":700}
+```
+
 ### Decode Speed Chart
 
 ```elixir
@@ -159,6 +216,12 @@ VegaLite.new(width: 700, height: 350)
 |> VegaLite.encode_field(:y, "decode_time_us", type: :quantitative, title: "Decode Time (µs)")
 |> VegaLite.encode_field(:color, "codec", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
+```
+
+<!-- livebook:{"output":true} -->
+
+```vega-lite
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"values":[{"codec":":lz4","dataset":"Float64 array","decode_mbps":1009.0,"decode_time_us":64,"encode_mbps":320.3,"encode_time_us":204},{"codec":":snappy","dataset":"Float64 array","decode_mbps":659.3,"decode_time_us":99,"encode_mbps":445.4,"encode_time_us":147},{"codec":":zstd","dataset":"Float64 array","decode_mbps":373.1,"decode_time_us":175,"encode_mbps":149.4,"encode_time_us":438},{"codec":":bzip2","dataset":"Float64 array","decode_mbps":87.5,"decode_time_us":749,"encode_mbps":20.2,"encode_time_us":3245},{"codec":":blosc2","dataset":"Float64 array","decode_mbps":1395.9,"decode_time_us":46,"encode_mbps":1158.9,"encode_time_us":56},{"codec":":lz4","dataset":"Random bytes","decode_mbps":3486.0,"decode_time_us":18,"encode_mbps":2887.0,"encode_time_us":22},{"codec":":snappy","dataset":"Random bytes","decode_mbps":4567.0,"decode_time_us":14,"encode_mbps":3912.6,"encode_time_us":16},{"codec":":zstd","dataset":"Random bytes","decode_mbps":3055.3,"decode_time_us":21,"encode_mbps":3821.3,"encode_time_us":17},{"codec":":bzip2","dataset":"Random bytes","decode_mbps":25.7,"decode_time_us":2552,"encode_mbps":11.1,"encode_time_us":5903},{"codec":":blosc2","dataset":"Random bytes","decode_mbps":3431.2,"decode_time_us":19,"encode_mbps":283.6,"encode_time_us":231},{"codec":":lz4","dataset":"Repetitive text","decode_mbps":4008.9,"decode_time_us":22,"encode_mbps":5405.4,"encode_time_us":16},{"codec":":snappy","dataset":"Repetitive text","decode_mbps":3921.6,"decode_time_us":22,"encode_mbps":4.8e3,"encode_time_us":18},{"codec":":zstd","dataset":"Repetitive text","decode_mbps":3862.7,"decode_time_us":23,"encode_mbps":4379.6,"encode_time_us":20},{"codec":":bzip2","dataset":"Repetitive text","decode_mbps":183.5,"decode_time_us":490,"encode_mbps":11.5,"encode_time_us":7834},{"codec":":blosc2","dataset":"Repetitive text","decode_mbps":1435.4,"decode_time_us":62,"encode_mbps":1537.1,"encode_time_us":58},{"codec":":lz4","dataset":"Semi-structured","decode_mbps":2009.7,"decode_time_us":104,"encode_mbps":1013.3,"encode_time_us":207},{"codec":":snappy","dataset":"Semi-structured","decode_mbps":1625.3,"decode_time_us":129,"encode_mbps":994.9,"encode_time_us":211},{"codec":":zstd","dataset":"Semi-structured","decode_mbps":789.6,"decode_time_us":266,"encode_mbps":335.3,"encode_time_us":627},{"codec":":bzip2","dataset":"Semi-structured","decode_mbps":87.6,"decode_time_us":2400,"encode_mbps":27.3,"encode_time_us":7705},{"codec":":blosc2","dataset":"Semi-structured","decode_mbps":682.6,"decode_time_us":308,"encode_mbps":45.8,"encode_time_us":4587}]},"encoding":{"color":{"field":"codec","type":"nominal"},"column":{"field":"dataset","type":"nominal"},"x":{"field":"codec","sort":["lz4","snappy","zstd","bzip2","blosc2"],"type":"nominal"},"y":{"field":"decode_time_us","title":"Decode Time (µs)","type":"quantitative"}},"height":350,"mark":"bar","width":700}
 ```
 
 ## Memory Usage
@@ -188,6 +251,12 @@ end
 Kino.DataTable.new(memory_results)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```text
+[%{configurable: false, category: :compression, codec: ":lz4", streaming: false, heap_growth_words: 0}, %{configurable: false, category: :compression, codec: ":snappy", streaming: false, heap_growth_words: 0}, %{configurable: true, category: :compression, codec: ":zstd", streaming: false, heap_growth_words: -8372}, %{configurable: true, category: :compression, codec: ":bzip2", streaming: false, heap_growth_words: 0}, %{configurable: true, category: :compression, codec: ":blosc2", streaming: false, heap_growth_words: 0}]
+```
+
 ## Codec Profiles
 
 ```elixir
@@ -215,6 +284,33 @@ for {profile, %{best: best, why: why}} <- profile_data do
   IO.puts("  Codecs: #{inspect(best)}")
   IO.puts("  #{why}\n")
 end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+## Balanced
+  Codecs: [:zstd]
+  Good ratio with fast decompression. Default choice for most workloads
+
+## Maximum Ratio
+  Codecs: [:bzip2]
+  Smallest output. Accept slower speed for archival and cold storage
+
+## Numeric Arrays
+  Codecs: [:blosc2]
+  Shuffle+compress slashes size of typed data. Threaded for large arrays
+
+## Speed King
+  Codecs: [:lz4, :snappy]
+  Fastest encode/decode, ideal for hot paths, caching, and real-time systems
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok, :ok]
 ```
 
 ## Interactive Codec Selector
@@ -270,6 +366,22 @@ end
 IO.puts("Suggested options: #{inspect(default_opts)}")
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Recommended codec: :blosc2
+Reason: Purpose-built for numerical data with shuffle filters.
+Configurable: true
+Streaming: false
+Suggested options: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ## Decision Flowchart
 
 ```elixir
@@ -296,19 +408,48 @@ When choosing a codec, follow this decision path:
 IO.puts(flowchart)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+When choosing a codec, follow this decision path:
+
+1. Is your data typed numerical arrays?
+   YES → Use Blosc2 (with appropriate shuffle and typesize)
+   NO  → Continue
+
+2. Is latency critical (hot path, real-time)?
+   YES → Use LZ4 (fastest) or Snappy (low overhead)
+   NO  → Continue
+
+3. Is storage cost the primary concern?
+   YES → Use Bzip2 (best ratio) or Zstd with high level
+   NO  → Continue
+
+4. Default choice:
+   → Use Zstd (level 3)
+   → Good ratio, fast decompression, configurable
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ## Codec Feature Matrix
 
-| Feature      | LZ4          | Snappy     | Zstd         | Bzip2       | Blosc2        |
-| ------------ | ------------ | ---------- | ------------ | ----------- | ------------- |
-| Speed        | Very Fast    | Very Fast  | Fast         | Slow        | Medium        |
-| Ratio        | Low          | Low        | High         | Very High   | High (arrays) |
+| Feature      | LZ4           | Snappy     | Zstd         | Bzip2       | Blosc2        |
+| ------------ | ------------- | ---------- | ------------ | ----------- | ------------- |
+| Speed        | Very Fast     | Very Fast  | Fast         | Slow        | Medium        |
+| Ratio        | Low           | Low        | High         | Very High   | High (arrays) |
 | Configurable | Fixed profile | No         | Level 1–22 | Block 1–9 | Codec/shuffle |
-| Streaming    | No           | No         | No           | No          | No            |
-| Best For     | Hot paths    | Short data | General      | Archival    | Arrays        |
-| Shuffle      | —          | —        | —          | —         | Byte/Bit      |
-| Multi-thread | No           | No         | No           | No          | No            |
+| Streaming    | No            | No         | No           | No          | No            |
+| Best For     | Hot paths     | Short data | General      | Archival    | Arrays        |
+| Shuffle      | —           | —        | —          | —         | Byte/Bit      |
+| Multi-thread | No            | No         | No           | No          | No            |
 
-## Next Steps
+## Navigation
 
-* **[Building Storage Systems](04_building_storage_systems.livemd)** — production patterns and error handling
-* **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific data with Blosc2
+**Previous:** [Compression Fundamentals](02_compression_fundamentals.livemd) ·
+**Next:** [Building Storage Systems](04_building_storage_systems.livemd)

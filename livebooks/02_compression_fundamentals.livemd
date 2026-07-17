@@ -1,27 +1,38 @@
+<!-- livebook:{"persist_outputs":true} -->
+
 # Compression Fundamentals
 
 ```elixir
-local_path = Path.join(__DIR__, "../mix.exs")
+# Use this install to work with the source code
+# Mix.install(
+#   [
+#     {:ex_codecs, path: Path.join(__DIR__, "..")}, 
+#     {:rustler, "~> 0.36"},
+#     {:jason, "~> 1.4"}, 
+#     {:kino, "~> 0.14"}, 
+#     {:kino_vega_lite, "~> 0.1.13"}
+#   ],
+#   config:  [rustler_precompiled: [force_build: [ex_codecs: true]]]
+# )
 
-ex_codecs_dep =
-  if File.exists?(local_path) do
-    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
-  else
-    [{:ex_codecs, "~> 0.2.0"}]
-  end
-
-config =
-  if File.exists?(local_path) do
-    [rustler_precompiled: [force_build: [ex_codecs: true]]]
-  else
-    []
-  end
-
-Mix.install(
-  ex_codecs_dep ++ [{:jason, "~> 1.4"}, {:kino, "~> 0.14"}, {:kino_vega_lite, "~> 0.1.13"}],
-  config: config
-)
+Mix.install( [
+    {:ex_codecs, "~> 0.2.0"}, 
+    {:jason, "~> 1.4"}, 
+    {:kino, "~> 0.14"}, 
+    {:kino_vega_lite, "~> 0.1.13"}
+  ])
 ```
+
+## Series
+
+| #   | Livebook                                                       |
+| --- | -------------------------------------------------------------- |
+| 01  | [Introduction](01_introduction.livemd)                         |
+| 02  | **Compression Fundamentals** (you are here)                    |
+| 03  | [Codec Comparison](03_codec_comparison.livemd)                 |
+| 04  | [Building Storage Systems](04_building_storage_systems.livemd) |
+| 05  | [Zarr-Style Workloads](05_zarr_style_workloads.livemd)         |
+| 06  | [Spatial Codecs](06_spatial_codecs.livemd)                     |
 
 ## How Compression Works
 
@@ -48,6 +59,20 @@ for {label, data} <- [
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Repetitive (low entropy)     | 16384 -> 11 bytes | 1489.45x ratio
+Natural text (medium)        | 9000 -> 64 bytes | 140.63x ratio
+Random bytes (high entropy)  | 16384 -> 16394 bytes | 1.0x ratio
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok]
+```
+
 ## Lossless vs Lossy
 
 ExCodecs provides **lossless** codecs — decoded data is bit-for-bit identical to the original:
@@ -64,6 +89,22 @@ for codec <- compression_codecs do
   {:ok, dec} = ExCodecs.decode(codec, enc)
   IO.puts("#{String.pad_trailing(inspect(codec), 10)} lossless: #{dec == data}")
 end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:blosc2    lossless: true
+:bzip2     lossless: true
+:lz4       lossless: true
+:snappy    lossless: true
+:zstd      lossless: true
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok, :ok, :ok]
 ```
 
 > Lossy codecs (JPEG, MP3, etc.) sacrifice exact reproduction for smaller size. These are not in ExCodecs' scope but could be added via the `ExCodecs.Codec` behaviour.
@@ -88,6 +129,21 @@ IO.puts("Zstd:    #{byte_size(zstd_enc)} bytes (#{Float.round(100 * byte_size(zs
 IO.puts("Snappy:  #{byte_size(snappy_enc)} bytes (#{Float.round(100 * byte_size(snappy_enc) / byte_size(text), 1)}%)")
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Original: 9000 bytes
+LZ4:     78 bytes (0.9%)
+Zstd:    43 bytes (0.5%)
+Snappy:  451 bytes (5.0%)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ### Block-Sorting (Bzip2)
 
 Bzip2 uses the Burrows-Wheeler Transform to group similar characters, then applies Huffman coding:
@@ -96,6 +152,18 @@ Bzip2 uses the Burrows-Wheeler Transform to group similar characters, then appli
 # Bzip2 achieves excellent ratios on text-heavy data
 {:ok, bz_enc} = ExCodecs.encode(:bzip2, text)
 IO.puts("Bzip2:   #{byte_size(bz_enc)} bytes (#{Float.round(100 * byte_size(bz_enc) / byte_size(text), 1)}%)")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Bzip2:   84 bytes (0.9%)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ### Shuffle + Compress (Blosc2)
@@ -116,6 +184,22 @@ IO.puts("Blosc2 (none):   #{byte_size(blosc_none)} bytes")
 IO.puts("Blosc2 (byte):   #{byte_size(blosc_byte)} bytes")
 IO.puts("Blosc2 (bit):    #{byte_size(blosc_bit)} bytes")
 IO.puts("Zstd (plain):    #{byte_size(zstd_plain)} bytes")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Original:        16384 bytes
+Blosc2 (none):   8251 bytes
+Blosc2 (byte):   675 bytes
+Blosc2 (bit):    504 bytes
+Zstd (plain):    1889 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ## Speed vs Ratio Tradeoffs
@@ -149,6 +233,12 @@ end
 Kino.DataTable.new(results)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```text
+[%{codec: ":lz4", ratio: 29.0, dataset: "JSON-like", original_size: 20245, compressed_size: 5878, encode_us: 27, decode_us: 27}, %{codec: ":snappy", ratio: 32.9, dataset: "JSON-like", original_size: 20245, compressed_size: 6662, encode_us: 25, decode_us: 16}, %{codec: ":zstd", ratio: 14.2, dataset: "JSON-like", original_size: 20245, compressed_size: 2877, encode_us: 89, decode_us: 43}, %{codec: ":bzip2", ratio: 12.8, dataset: "JSON-like", original_size: 20245, compressed_size: 2595, encode_us: 1049, decode_us: 270}, %{codec: ":lz4", ratio: 0.8, dataset: "Natural text", original_size: 13500, compressed_size: 113, encode_us: 9, decode_us: 9}, %{codec: ":snappy", ratio: 5.0, dataset: "Natural text", original_size: 13500, compressed_size: 681, encode_us: 9, decode_us: 8}, %{codec: ":zstd", ratio: 0.5, dataset: "Natural text", original_size: 13500, compressed_size: 64, encode_us: 11, decode_us: 14}, %{codec: ":bzip2", ratio: 1.2, dataset: "Natural text", original_size: 13500, compressed_size: 156, encode_us: 1405, decode_us: 116}, %{codec: ":lz4", ratio: 0.4, dataset: "Repetitive", original_size: 50000, compressed_size: 220, encode_us: 12, decode_us: 41}, %{codec: ":snappy", ratio: 4.7, dataset: "Repetitive", original_size: 50000, compressed_size: 2359, encode_us: 12, decode_us: 20}, %{codec: ":zstd", ratio: 0.1, dataset: "Repetitive", original_size: 50000, compressed_size: 28, encode_us: 19, decode_us: 27}, %{codec: ":bzip2", ratio: 0.1, dataset: "Repetitive", original_size: 50000, compressed_size: 68, encode_us: 3903, decode_us: 293}, %{codec: ":lz4", ratio: 100.5, dataset: "Semi-random", ...}, ...]
+```
+
 ### Compression Ratio Visualization
 
 ```elixir
@@ -159,6 +249,12 @@ VegaLite.new(width: 600, height: 400)
 |> VegaLite.encode_field(:y, "ratio", type: :quantitative, title: "Compressed size (%)")
 |> VegaLite.encode_field(:color, "dataset", type: :nominal)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
+```
+
+<!-- livebook:{"output":true} -->
+
+```vega-lite
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"values":[{"codec":":lz4","compressed_size":5878,"dataset":"JSON-like","decode_us":27,"encode_us":27,"original_size":20245,"ratio":29.0},{"codec":":snappy","compressed_size":6662,"dataset":"JSON-like","decode_us":16,"encode_us":25,"original_size":20245,"ratio":32.9},{"codec":":zstd","compressed_size":2877,"dataset":"JSON-like","decode_us":43,"encode_us":89,"original_size":20245,"ratio":14.2},{"codec":":bzip2","compressed_size":2595,"dataset":"JSON-like","decode_us":270,"encode_us":1049,"original_size":20245,"ratio":12.8},{"codec":":lz4","compressed_size":113,"dataset":"Natural text","decode_us":9,"encode_us":9,"original_size":13500,"ratio":0.8},{"codec":":snappy","compressed_size":681,"dataset":"Natural text","decode_us":8,"encode_us":9,"original_size":13500,"ratio":5.0},{"codec":":zstd","compressed_size":64,"dataset":"Natural text","decode_us":14,"encode_us":11,"original_size":13500,"ratio":0.5},{"codec":":bzip2","compressed_size":156,"dataset":"Natural text","decode_us":116,"encode_us":1405,"original_size":13500,"ratio":1.2},{"codec":":lz4","compressed_size":220,"dataset":"Repetitive","decode_us":41,"encode_us":12,"original_size":50000,"ratio":0.4},{"codec":":snappy","compressed_size":2359,"dataset":"Repetitive","decode_us":20,"encode_us":12,"original_size":50000,"ratio":4.7},{"codec":":zstd","compressed_size":28,"dataset":"Repetitive","decode_us":27,"encode_us":19,"original_size":50000,"ratio":0.1},{"codec":":bzip2","compressed_size":68,"dataset":"Repetitive","decode_us":293,"encode_us":3903,"original_size":50000,"ratio":0.1},{"codec":":lz4","compressed_size":10045,"dataset":"Semi-random","decode_us":14,"encode_us":13,"original_size":10000,"ratio":100.5},{"codec":":snappy","compressed_size":10005,"dataset":"Semi-random","decode_us":8,"encode_us":11,"original_size":10000,"ratio":100.0},{"codec":":zstd","compressed_size":10010,"dataset":"Semi-random","decode_us":11,"encode_us":12,"original_size":10000,"ratio":100.1},{"codec":":bzip2","compressed_size":10466,"dataset":"Semi-random","decode_us":462,"encode_us":1586,"original_size":10000,"ratio":104.7}]},"encoding":{"color":{"field":"dataset","type":"nominal"},"column":{"field":"dataset","type":"nominal"},"x":{"field":"codec","type":"nominal"},"y":{"field":"ratio","title":"Compressed size (%)","type":"quantitative"}},"height":400,"mark":"bar","width":600}
 ```
 
 ### Speed Visualization
@@ -173,6 +269,12 @@ VegaLite.new(width: 600, height: 400)
 |> VegaLite.encode_field(:column, "dataset", type: :nominal)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```vega-lite
+{"$schema":"https://vega.github.io/schema/vega-lite/v5.json","data":{"values":[{"codec":":lz4","compressed_size":5878,"dataset":"JSON-like","decode_us":27,"encode_us":27,"original_size":20245,"ratio":29.0},{"codec":":snappy","compressed_size":6662,"dataset":"JSON-like","decode_us":16,"encode_us":25,"original_size":20245,"ratio":32.9},{"codec":":zstd","compressed_size":2877,"dataset":"JSON-like","decode_us":43,"encode_us":89,"original_size":20245,"ratio":14.2},{"codec":":bzip2","compressed_size":2595,"dataset":"JSON-like","decode_us":270,"encode_us":1049,"original_size":20245,"ratio":12.8},{"codec":":lz4","compressed_size":113,"dataset":"Natural text","decode_us":9,"encode_us":9,"original_size":13500,"ratio":0.8},{"codec":":snappy","compressed_size":681,"dataset":"Natural text","decode_us":8,"encode_us":9,"original_size":13500,"ratio":5.0},{"codec":":zstd","compressed_size":64,"dataset":"Natural text","decode_us":14,"encode_us":11,"original_size":13500,"ratio":0.5},{"codec":":bzip2","compressed_size":156,"dataset":"Natural text","decode_us":116,"encode_us":1405,"original_size":13500,"ratio":1.2},{"codec":":lz4","compressed_size":220,"dataset":"Repetitive","decode_us":41,"encode_us":12,"original_size":50000,"ratio":0.4},{"codec":":snappy","compressed_size":2359,"dataset":"Repetitive","decode_us":20,"encode_us":12,"original_size":50000,"ratio":4.7},{"codec":":zstd","compressed_size":28,"dataset":"Repetitive","decode_us":27,"encode_us":19,"original_size":50000,"ratio":0.1},{"codec":":bzip2","compressed_size":68,"dataset":"Repetitive","decode_us":293,"encode_us":3903,"original_size":50000,"ratio":0.1},{"codec":":lz4","compressed_size":10045,"dataset":"Semi-random","decode_us":14,"encode_us":13,"original_size":10000,"ratio":100.5},{"codec":":snappy","compressed_size":10005,"dataset":"Semi-random","decode_us":8,"encode_us":11,"original_size":10000,"ratio":100.0},{"codec":":zstd","compressed_size":10010,"dataset":"Semi-random","decode_us":11,"encode_us":12,"original_size":10000,"ratio":100.1},{"codec":":bzip2","compressed_size":10466,"dataset":"Semi-random","decode_us":462,"encode_us":1586,"original_size":10000,"ratio":104.7}]},"encoding":{"color":{"field":"dataset","type":"nominal"},"column":{"field":"dataset","type":"nominal"},"x":{"field":"codec","type":"nominal"},"y":{"field":"encode_us","title":"Encode time (µs)","type":"quantitative"}},"height":400,"mark":"bar","width":600}
+```
+
 ## When Not to Compress
 
 ```elixir
@@ -185,52 +287,238 @@ IO.puts("After Zstd compress:  #{byte_size(after_zstd)} bytes")
 IO.puts("Compressed data can actually GROW due to header overhead")
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Random data:          8192 bytes
+After Zstd compress:  8202 bytes
+Compressed data can actually GROW due to header overhead
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 Rules of thumb:
 
 * **Don't compress encrypted or already-compressed data** — you waste CPU for no gain
 * **Avoid compressing tiny payloads** — the codec header overhead may exceed savings
 * **Consider latency** — LZ4/Snappy for hot paths, Bzip2 only for cold storage
 
-## Memory vs CPU Considerations
+## CPU vs size (and where memory actually fits)
+
+ExCodecs does not expose peak NIF memory counters, so these cells measure what
+we *can* observe on the BEAM: **encode time, decode time, and compressed size**.
+Memory notes below come from the codec designs (see the Zstd / Bzip2 guides).
+
+### Zstd levels — CPU for size; decode stays fast
+
+Higher `:level` spends more **encode** CPU for a smaller blob. Decompression
+speed stays roughly flat across levels — that is the main Zstd property worth
+seeing.
 
 ```elixir
-# Higher compression levels trade CPU time and memory for smaller output
 data = String.duplicate("Hello, World! This is a compression test. ", 2000)
 
-IO.puts("Zstd compression levels vs output size:\n")
-IO.puts(String.pad_trailing("Level", 8) <> String.pad_trailing("Size (bytes)", 14) <> String.pad_trailing("Ratio %", 10) <> "Time (µs)")
-IO.puts(String.duplicate("-", 45))
+IO.puts(
+  String.pad_trailing("Level", 8) <>
+    String.pad_trailing("Size", 10) <>
+    String.pad_trailing("Ratio%", 10) <>
+    String.pad_trailing("Encode µs", 12) <>
+    "Decode µs"
+)
+
+IO.puts(String.duplicate("-", 52))
 
 for level <- [1, 3, 5, 9, 15, 22] do
-  {:ok, enc} = ExCodecs.encode(:zstd, data, level: level)
-  {time, _} = :timer.tc(fn -> ExCodecs.encode(:zstd, data, level: level) end)
+  {enc_us, {:ok, enc}} = :timer.tc(fn -> ExCodecs.encode(:zstd, data, level: level) end)
+  {dec_us, {:ok, ^data}} = :timer.tc(fn -> ExCodecs.decode(:zstd, enc) end)
   ratio = Float.round(100 * byte_size(enc) / byte_size(data), 1)
+
   IO.puts(
     String.pad_trailing("#{level}", 8) <>
-    String.pad_trailing("#{byte_size(enc)}", 14) <>
-    String.pad_trailing("#{ratio}", 10) <>
-    "#{time}"
+      String.pad_trailing("#{byte_size(enc)}", 10) <>
+      String.pad_trailing("#{ratio}", 10) <>
+      String.pad_trailing("#{enc_us}", 12) <>
+      "#{dec_us}"
+  )
+end
+
+IO.puts("""
+
+Memory (design, not measured here): higher levels tend to use larger
+match windows / tables during *encode*. Decode memory stays modest.
+On the BEAM these buffers live in DirtyCpu NIF memory, not the Erlang heap.
+""")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Level   Size      Ratio%    Encode µs   Decode µs
+----------------------------------------------------
+1       64        0.1       305         158
+3       64        0.1       229         98
+5       64        0.1       354         99
+9       64        0.1       173         99
+15      64        0.1       987         74
+22      61        0.1       448         94
+
+Memory (design, not measured here): higher levels tend to use larger
+match windows / tables during *encode*. Decode memory stays modest.
+On the BEAM these buffers live in DirtyCpu NIF memory, not the Erlang heap.
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+### Bzip2 block size — speed, ratio, and memory scale together
+
+`:block_size` is 1..9. Each step is about **100 KiB** of compressor working
+memory (and roughly half that on decompress). On short inputs the size win
+from larger blocks is small; the interesting signal is encode/decode time
+growing with block size.
+
+```elixir
+data = String.duplicate("Hello, World! This is a compression test. ", 2000)
+
+IO.puts(
+  String.pad_trailing("Block", 8) <>
+    String.pad_trailing("Size", 10) <>
+    String.pad_trailing("Ratio%", 10) <>
+    String.pad_trailing("Encode µs", 12) <>
+    String.pad_trailing("Decode µs", 12) <>
+    "~Mem compress"
+)
+
+IO.puts(String.duplicate("-", 64))
+
+for bs <- 1..9 do
+  {enc_us, {:ok, enc}} = :timer.tc(fn -> ExCodecs.encode(:bzip2, data, block_size: bs) end)
+  {dec_us, {:ok, ^data}} = :timer.tc(fn -> ExCodecs.decode(:bzip2, enc) end)
+  ratio = Float.round(100 * byte_size(enc) / byte_size(data), 1)
+  # Rule of thumb from the Bzip2 guide: ~100 KiB × block_size while compressing.
+  mem = "#{bs * 100} KiB"
+
+  IO.puts(
+    String.pad_trailing("#{bs}", 8) <>
+      String.pad_trailing("#{byte_size(enc)}", 10) <>
+      String.pad_trailing("#{ratio}", 10) <>
+      String.pad_trailing("#{enc_us}", 12) <>
+      String.pad_trailing("#{dec_us}", 12) <>
+      mem
+  )
+end
+
+IO.puts("""
+
+Unlike Zstd, Bzip2 decode is also relatively slow — pick it for cold/archival
+paths, not hot reads. Prefer a smaller block_size when concurrent compressions
+would otherwise stack many megabytes of NIF memory.
+""")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Block   Size      Ratio%    Encode µs   Decode µs   ~Mem compress
+----------------------------------------------------------------
+1       158       0.2       20610       1363        100 KiB
+2       158       0.2       15793       905         200 KiB
+3       158       0.2       9738        599         300 KiB
+4       158       0.2       9477        630         400 KiB
+5       158       0.2       8405        539         500 KiB
+6       158       0.2       8074        532         600 KiB
+7       158       0.2       8427        504         700 KiB
+8       158       0.2       7967        536         800 KiB
+9       158       0.2       8143        499         900 KiB
+
+Unlike Zstd, Bzip2 decode is also relatively slow — pick it for cold/archival
+paths, not hot reads. Prefer a smaller block_size when concurrent compressions
+would otherwise stack many megabytes of NIF memory.
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Decompression bombs (bounded)
+
+A **decompression bomb** is a tiny compressed blob that expands into a huge
+payload. ExCodecs rejects that expansion when it would exceed
+`:max_output_size` (default **256 MiB**).
+
+The classic shape is a long run of zeros: cheap to compress, expensive to
+expand. Keep the expanded size modest in demos and set a tight bound below it
+so the decode fails safely instead of allocating the full output.
+
+```elixir
+expanded_size = 65_536
+tight_limit = 1_024
+bomb_raw = :binary.copy(<<0>>, expanded_size)
+
+codecs = [
+  {:zstd, []},
+  {:lz4, []},
+  {:snappy, []},
+  {:bzip2, []},
+  {:blosc2, [cname: :lz4, shuffle: :none, typesize: 1]}
+]
+
+for {codec, encode_opts} <- codecs do
+  {:ok, bomb} = ExCodecs.encode(codec, bomb_raw, encode_opts)
+  ratio = Float.round(expanded_size / byte_size(bomb), 1)
+
+  {:error, %ExCodecs.Error{reason: :output_limit_exceeded}} =
+    ExCodecs.decode(codec, bomb, max_output_size: tight_limit)
+
+  {:ok, ^bomb_raw} =
+    ExCodecs.decode(codec, bomb, max_output_size: expanded_size)
+
+  IO.puts(
+    "#{String.pad_trailing(inspect(codec), 10)} bomb #{byte_size(bomb)} bytes " <>
+      "(#{ratio}x) → rejected under #{tight_limit}, OK under #{expanded_size}"
   )
 end
 ```
 
-```elixir
-# Bzip2 block size affects memory usage
-IO.puts("\nBzip2 block sizes vs output size:\n")
-IO.puts(String.pad_trailing("Block", 8) <> String.pad_trailing("Size (bytes)", 14) <> "Ratio %")
-IO.puts(String.duplicate("-", 35))
+<!-- livebook:{"output":true} -->
 
-for bs <- 1..9 do
-  {:ok, enc} = ExCodecs.encode(:bzip2, data, block_size: bs)
-  ratio = Float.round(100 * byte_size(enc) / byte_size(data), 1)
-  IO.puts(String.pad_trailing("#{bs}", 8) <> String.pad_trailing("#{byte_size(enc)}", 14) <> "#{ratio}")
-end
 ```
+:zstd      bomb 11 bytes (5957.8x) → rejected under 1024, OK under 65536
+:lz4       bomb 272 bytes (240.9x) → rejected under 1024, OK under 65536
+:snappy    bomb 3077 bytes (21.3x) → rejected under 1024, OK under 65536
+:bzip2     bomb 43 bytes (1524.1x) → rejected under 1024, OK under 65536
+:blosc2    bomb 32 bytes (2048.0x) → rejected under 1024, OK under 65536
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok, :ok, :ok]
+```
+
+> For untrusted inputs, pass an explicit tight `:max_output_size`. Raise the
+> default only for trusted sources you control.
 
 ## Key Takeaways
 
 1. **Entropy dominates** — random data barely compresses; repetitive data compresses well
 2. **No single best codec** — each excels for different data and latency requirements
 3. **Shuffle transforms** (Blosc2) dramatically improve compression of typed binary data
-4. **Compression level is a dial** — higher means smaller output but more CPU/memory
-5. **Measure your actual data** — use the [Codec Comparison](03_codec_comparison.livemd) livebook with your own datasets
+4. **Compression level is a dial** — higher Zstd levels cost encode CPU; decode stays fast. Bzip2 `block_size` scales CPU, ratio, and ~100 KiB×N working memory together
+5. **Bound decompression** — high-ratio “bomb” payloads are rejected via `:max_output_size`
+6. **Measure your actual data** — use the [Codec Comparison](03_codec_comparison.livemd) livebook with your own datasets
+
+## Navigation
+
+**Previous:** [Introduction](01_introduction.livemd) · **Next:** [Codec Comparison](03_codec_comparison.livemd)

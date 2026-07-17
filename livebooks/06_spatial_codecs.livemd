@@ -1,24 +1,30 @@
 # Spatial Codecs: Point Clouds and Gaussian Splats
 
 ```elixir
-local_path = Path.join(__DIR__, "../mix.exs")
+# Use this install to work with the source code
+# Mix.install(
+#   [
+#     {:ex_codecs, path: Path.join(__DIR__, "..")}, 
+#     {:rustler, "~> 0.36"}
+#   ],
+#   config:  [rustler_precompiled: [force_build: [ex_codecs: true]]]
+# )
 
-ex_codecs_dep =
-  if File.exists?(local_path) do
-    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
-  else
-    [{:ex_codecs, "~> 0.2.0"}]
-  end
-
-config =
-  if File.exists?(local_path) do
-    [rustler_precompiled: [force_build: [ex_codecs: true]]]
-  else
-    []
-  end
-
-Mix.install(ex_codecs_dep, config: config)
+Mix.install([
+  {:ex_codecs, "~> 0.2"}
+])
 ```
+
+## Series
+
+| #   | Livebook                                                       |
+| --- | -------------------------------------------------------------- |
+| 01  | [Introduction](01_introduction.livemd)                         |
+| 02  | [Compression Fundamentals](02_compression_fundamentals.livemd) |
+| 03  | [Codec Comparison](03_codec_comparison.livemd)                 |
+| 04  | [Building Storage Systems](04_building_storage_systems.livemd) |
+| 05  | [Zarr-Style Workloads](05_zarr_style_workloads.livemd)         |
+| 06  | **Spatial Codecs** (you are here)                              |
 
 ## One Framework, Specialized Category APIs
 
@@ -203,8 +209,12 @@ to use the spatial category API.
 %{reason: error.reason, message: error.message}
 ```
 
-## Next Steps
+## Further Reading
 
-* Read **Understanding Spatial Codecs** for schema and format trade-offs.
-* Read **Spatial Wire Formats** for the frozen EXCP and GSPL layouts.
+* [Understanding Spatial Codecs](https://hexdocs.pm/ex_codecs/understanding_spatial_codecs.html) — schema and format trade-offs
+* [Spatial Wire Formats](https://hexdocs.pm/ex_codecs/spatial_formats.html) — frozen EXCP / GSPL / PLY layouts
 * Add Zstd after spatial encoding when storage or transfer size matters.
+
+## Navigation
+
+**Previous:** [Zarr-Style Workloads](05_zarr_style_workloads.livemd)

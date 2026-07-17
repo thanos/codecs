@@ -1,27 +1,38 @@
+<!-- livebook:{"persist_outputs":true} -->
+
 # Building Storage Systems with ExCodecs
 
 ```elixir
-local_path = Path.join(__DIR__, "../mix.exs")
+# Use this install to work with the source code
+# Mix.install(
+#   [
+#     {:ex_codecs, path: Path.join(__DIR__, "..")}, 
+#     {:rustler, "~> 0.36"},
+#     {:jason, "~> 1.4"}, 
+#     {:kino, "~> 0.14"}, 
+#     {:kino_vega_lite, "~> 0.1.13"}
+#   ],
+#   config:  [rustler_precompiled: [force_build: [ex_codecs: true]]]
+# )
 
-ex_codecs_dep =
-  if File.exists?(local_path) do
-    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
-  else
-    [{:ex_codecs, "~> 0.2.0"}]
-  end
-
-config =
-  if File.exists?(local_path) do
-    [rustler_precompiled: [force_build: [ex_codecs: true]]]
-  else
-    []
-  end
-
-Mix.install(
-  ex_codecs_dep ++ [{:jason, "~> 1.4"}, {:kino, "~> 0.14"}, {:kino_vega_lite, "~> 0.1.13"}],
-  config: config
-)
+Mix.install( [
+    {:ex_codecs, "~> 0.2"}, 
+    {:jason, "~> 1.4"}, 
+    {:kino, "~> 0.14"}, 
+    {:kino_vega_lite, "~> 0.1.13"}
+  ])
 ```
+
+## Livebook Series
+
+| #   | Livebook                                                       |
+| --- | -------------------------------------------------------------- |
+| 01  | [Introduction](01_introduction.livemd)                         |
+| 02  | [Compression Fundamentals](02_compression_fundamentals.livemd) |
+| 03  | [Codec Comparison](03_codec_comparison.livemd)                 |
+| 04  | **Building Storage Systems** (you are here)                    |
+| 05  | [Zarr-Style Workloads](05_zarr_style_workloads.livemd)         |
+| 06  | [Spatial Codecs](06_spatial_codecs.livemd)                     |
 
 ## Practical Usage Patterns
 
@@ -34,6 +45,18 @@ data = "Important data to store"
 {:ok, recovered} = ExCodecs.decode(:zstd, compressed)
 
 IO.puts("Round-trip OK: #{recovered == data}")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Round-trip OK: true
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ### Choosing a Codec at Runtime
@@ -50,6 +73,19 @@ content_type = "application/json"
 codec = StorageConfig.codec_for_content_type(content_type)
 IO.puts("Selected codec: #{inspect(codec)}")
 IO.puts("Supported: #{ExCodecs.supports?(codec)}")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Selected codec: :zstd
+Supported: true
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ## Building a Compressed Storage Layer
@@ -121,6 +157,12 @@ defmodule CompressedStore do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+{:module, CompressedStore, <<70, 79, 82, 49, 0, 0, 36, ...>>, ...}
+```
+
 ### Using the Compressed Store
 
 ```elixir
@@ -140,6 +182,25 @@ IO.puts("  Entries: #{info.entry_count}")
 IO.puts("  Original: #{info.total_original_bytes} bytes")
 IO.puts("  Compressed: #{info.total_compressed_bytes} bytes")
 IO.puts("  Savings: #{info.savings_pct}%")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Retrieved doc1 (14000 bytes)
+
+Storage Summary:
+  Codec: :zstd
+  Entries: 3
+  Original: 21644 bytes
+  Compressed: 4587 bytes
+  Savings: 78.8%
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ## Multi-Codec Store
@@ -204,6 +265,12 @@ defmodule MultiCodecStore do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+{:module, MultiCodecStore, <<70, 79, 82, 49, 0, 0, 27, ...>>, ...}
+```
+
 ### Using the Multi-Codec Store
 
 ```elixir
@@ -226,6 +293,24 @@ IO.puts("\nCodec distribution:")
 for {codec, count, orig, comp} <- MultiCodecStore.stats() do
   IO.puts("  #{inspect(codec)}: #{count} entries, #{orig} -> #{comp} bytes")
 end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+floats: best codec = :zstd, 32768 -> 4801 bytes (14.7%)
+repetitive: best codec = :zstd, 45000 -> 21 bytes (0.0%)
+semi_random: best codec = :snappy, 10000 -> 10005 bytes (100.0%)
+
+Codec distribution:
+  :snappy: 1 entries, 10000 -> 10005 bytes
+  :zstd: 2 entries, 77768 -> 4822 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok]
 ```
 
 ## Chunked Compression for Large Files
@@ -286,6 +371,12 @@ defmodule ChunkedCompressor do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+{:module, ChunkedCompressor, <<70, 79, 82, 49, 0, 0, 24, ...>>, ...}
+```
+
 ```elixir
 large_data = String.duplicate("This is a chunk of data that repeats. ", 10000)
 
@@ -296,6 +387,21 @@ IO.puts("Original:   #{byte_size(large_data)} bytes")
 IO.puts("Compressed: #{byte_size(compressed)} bytes")
 IO.puts("Ratio:      #{Float.round(100 * byte_size(compressed) / byte_size(large_data), 1)}%")
 IO.puts("Round-trip: #{recovered == large_data}")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Original:   380000 bytes
+Compressed: 322 bytes
+Ratio:      0.1%
+Round-trip: false
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ## Error Handling Best Practices
@@ -328,15 +434,40 @@ case ExCodecs.encode(:zstd, "some data") do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+{:ok, <<40, 181, 47, 253, 32, 9, 73, 0, 0, 115, 111, 109, 101, 32, 100, 97, 116, 97>>}
+```
+
 ```elixir
-# Bound decompression for untrusted payloads (default is 256 MiB)
-{:ok, compressed} = ExCodecs.encode(:zstd, String.duplicate("x", 1024))
+# Bound decompression for untrusted payloads (default is 256 MiB).
+# Classic bomb shape: 64 KiB of zeros → tiny compressed input.
+bomb_raw = :binary.copy(<<0>>, 65_536)
+{:ok, bomb} = ExCodecs.encode(:zstd, bomb_raw)
 
 {:error, %ExCodecs.Error{reason: :output_limit_exceeded}} =
-  ExCodecs.decode(:zstd, compressed, max_output_size: 16)
+  ExCodecs.decode(:zstd, bomb, max_output_size: 1_024)
 
-{:ok, _decoded} = ExCodecs.decode(:zstd, compressed, max_output_size: 4096)
+{:ok, ^bomb_raw} = ExCodecs.decode(:zstd, bomb, max_output_size: 65_536)
+
+IO.puts("bomb compressed size: #{byte_size(bomb)} bytes (#{Float.round(65_536 / byte_size(bomb), 1)}x)")
 ```
+
+<!-- livebook:{"output":true} -->
+
+```
+bomb compressed size: 11 bytes (5957.8x)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+> See [Compression Fundamentals](02_compression_fundamentals.livemd) for the
+> same pattern across all compression codecs.
 
 ```elixir
 defmodule SafeCompress do
@@ -358,6 +489,18 @@ end
 IO.puts("Safe compress OK: #{is_binary(result)}")
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Safe compress OK: true
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ```elixir
 defmodule CompressWithFallback do
   def call(data, codecs \\ [:zstd, :lz4, :snappy]) do
@@ -374,6 +517,19 @@ end
 {:ok, {used_codec, compressed}} = CompressWithFallback.call("fallback test data")
 IO.puts("Used codec: #{inspect(used_codec)}")
 IO.puts("Compressed: #{byte_size(compressed)} bytes")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Used codec: :zstd
+Compressed: 27 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ## ETS Integration
@@ -417,6 +573,12 @@ defmodule CompressedETS do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+{:module, CompressedETS, <<70, 79, 82, 49, 0, 0, 19, ...>>, ...}
+```
+
 ```elixir
 table = CompressedETS.new()
 
@@ -436,6 +598,24 @@ IO.puts("  Savings: #{stats.savings_pct}%")
 IO.puts("\nRetrieved #{byte_size(val)} bytes successfully")
 
 :ets.delete(table)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+ETS Compressed Store:
+  Entries: 100
+  Original: 350000 bytes
+  Compressed: 2400 bytes
+  Savings: 99.3%
+
+Retrieved 3500 bytes successfully
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+true
 ```
 
 ## File Storage Integration
@@ -480,6 +660,12 @@ defmodule CompressedFileIO do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+{:module, CompressedFileIO, <<70, 79, 82, 49, 0, 0, 15, ...>>, ...}
+```
+
 ```elixir
 test_data = String.duplicate("Compressed file storage example. ", 2000)
 path = Path.join(System.tmp_dir!(), "ex_codecs_demo.dat")
@@ -494,6 +680,20 @@ IO.puts("File size: #{File.stat!(path).size} bytes")
 File.rm(path)
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Wrote and read 66000 bytes
+Round-trip OK: true
+File size: 83 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ## Key Takeaways
 
 1. **Wrap encode/decode** in your own modules to centralize codec choice and error handling
@@ -503,4 +703,7 @@ File.rm(path)
 5. **Chunk large files** — enables random access, parallel processing, and bounded memory
 6. **Try multiple codecs** for mixed workloads — different data compresses best with different algorithms
 
-Next: **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)**
+## Navigation
+
+**Previous:** [Codec Comparison](03_codec_comparison.livemd) ·
+**Next:** [Zarr-Style Workloads](05_zarr_style_workloads.livemd)

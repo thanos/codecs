@@ -1,24 +1,32 @@
+<!-- livebook:{"persist_outputs":true} -->
+
 # Introduction to ExCodecs
 
 ```elixir
-local_path = Path.join(__DIR__, "../mix.exs")
+# Use this install to work with the source code
+# Mix.install(
+#   [
+#     {:ex_codecs, path: Path.join(__DIR__, "..")}, 
+#     {:rustler, "~> 0.36"}
+#   ],
+#   config:  [rustler_precompiled: [force_build: [ex_codecs: true]]]
+# )
 
-ex_codecs_dep =
-  if File.exists?(local_path) do
-    [{:ex_codecs, path: Path.join(__DIR__, "..")}, {:rustler, "~> 0.36"}]
-  else
-    [{:ex_codecs, "~> 0.2.0"}]
-  end
-
-config =
-  if File.exists?(local_path) do
-    [rustler_precompiled: [force_build: [ex_codecs: true]]]
-  else
-    []
-  end
-
-Mix.install(ex_codecs_dep, config: config)
+Mix.install([
+  {:ex_codecs, "~> 0.2"}
+])
 ```
+
+## Series
+
+| #   | Livebook                                                       |
+| --- | -------------------------------------------------------------- |
+| 01  | **Introduction** (you are here)                                |
+| 02  | [Compression Fundamentals](02_compression_fundamentals.livemd) |
+| 03  | [Codec Comparison](03_codec_comparison.livemd)                 |
+| 04  | [Building Storage Systems](04_building_storage_systems.livemd) |
+| 05  | [Zarr-Style Workloads](05_zarr_style_workloads.livemd)         |
+| 06  | [Spatial Codecs](06_spatial_codecs.livemd)                     |
 
 ## What is a Codec?
 
@@ -41,6 +49,12 @@ point-cloud and Gaussian formats use `ExCodecs.Spatial`.
 # Spatial category interface:
 #   {:ok, encoded} = ExCodecs.Spatial.encode(cloud, format: :ply)
 #   {:ok, decoded} = ExCodecs.Spatial.decode(encoded, format: :ply)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+nil
 ```
 
 ## Why Codecs Matter
@@ -69,20 +83,102 @@ ExCodecs is a **codec framework**, not just a compression library:
 
 Let's see it in action.
 
+```elixir
+original = String.duplicate(~S"""
+  Romeo and Juliet
+Excerpt from Act 2, Scene 2
+
+JULIET
+O Romeo, Romeo! wherefore art thou Romeo?
+Deny thy father and refuse thy name;
+Or, if thou wilt not, be but sworn my love,
+And I'll no longer be a Capulet.
+
+ROMEO
+[Aside] Shall I hear more, or shall I speak at this?
+
+JULIET
+'Tis but thy name that is my enemy;
+Thou art thyself, though not a Montague.
+What's Montague? it is nor hand, nor foot,
+Nor arm, nor face, nor any other part
+Belonging to a man. O, be some other name!
+What's in a name? that which we call a rose
+By any other name would smell as sweet;
+So Romeo would, were he not Romeo call'd,
+Retain that dear perfection which he owes
+Without that title. Romeo, doff thy name,
+And for that name which is no part of thee
+Take all myself.
+
+ROMEO
+I take thee at thy word:
+Call me but love, and I'll be new baptized;
+Henceforth I never will be Romeo.
+
+JULIET
+What man art thou that thus bescreen'd in night
+So stumblest on my counsel?
+  """, 100)
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+warning: outdented heredoc line. The contents inside the heredoc should be indented at the same level as the closing """. The following is forbidden:
+
+    def text do
+      """
+    contents
+      """
+    end
+
+Instead make sure the contents are indented as much as the heredoc closing:
+
+    def text do
+      """
+      contents
+      """
+    end
+
+The current heredoc line is indented too little
+└─ work/ex_codecs/livebooks/01_introduction.livemd#cell:krsz4o6wgjua4fyq:3:31
+
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+"Romeo and Juliet\nExcerpt from Act 2, Scene 2\n\nJULIET\nO Romeo, Romeo! wherefore art thou Romeo?\nDeny thy father and refuse thy name;\nOr, if thou wilt not, be but sworn my love,\nAnd I'll no longer be a Capulet.\n\nROMEO\n[Aside] Shall I hear more, or shall I speak at this?\n\nJULIET\n'Tis but thy name that is my enemy;\nThou art thyself, though not a Montague.\nWhat's Montague? it is nor hand, nor foot,\nNor arm, nor face, nor any other part\nBelonging to a man. O, be some other name!\nWhat's in a name? that which we call a rose\nBy any other name would smell as sweet;\nSo Romeo would, were he not Romeo call'd,\nRetain that dear perfection which he owes\nWithout that title. Romeo, doff thy name,\nAnd for that name which is no part of thee\nTake all myself.\n\nROMEO\nI take thee at thy word:\nCall me but love, and I'll be new baptized;\nHenceforth I never will be Romeo.\n\nJULIET\nWhat man art thou that thus bescreen'd in night\nSo stumblest on my counsel?\nRomeo and Juliet\nExcerpt from Act 2, Scene 2\n\nJULIET\nO Romeo, Romeo! wherefore art thou Romeo?\nDeny thy father and refuse thy name;\nOr, if thou wilt not, be but sworn my love,\nAnd I'll no longer be a Capulet.\n\nROMEO\n[Aside] Shall I hear more, or shall I speak at this?\n\nJULIET\n'Tis but thy name that is my enemy;\nThou art thyself, though not a Montague.\nWhat's Montague? it is nor hand, nor foot,\nNor arm, nor face, nor any other part\nBelonging to a man. O, be some other name!\nWhat's in a name? that which we call a rose\nBy any other name would smell as sweet;\nSo Romeo would, were he not Romeo call'd,\nRetain that dear perfection which he owes\nWithout that title. Romeo, doff thy name,\nAnd for that name which is no part of thee\nTake all myself.\n\nROMEO\nI take thee at thy word:\nCall me but love, and I'll be new baptized;\nHenceforth I never will be Romeo.\n\nJULIET\nWhat man art thou that thus bescreen'd in night\nSo stumblest on my counsel?\nRomeo and Juliet\nExcerpt from Act 2, Scene 2\n\nJULIET\nO Romeo, Romeo! wherefore art thou Romeo?\nDeny thy father and refuse thy name;\nOr, if thou wilt not, be but sworn my love,\nAnd I'll no longer be a Capulet.\n\nROMEO\n[Aside] Shall I hear more, or shall I speak at this?\n\nJULIET\n'Tis but thy name that is my enemy;\nThou art thyself, though not a Montague.\nWhat's Montague? it is nor hand, nor foot,\nNor arm, nor face, nor any other part\nBelonging to a man. O, be some other name!\nWhat's in a name? that which we call a rose\nBy any other name would smell as sweet;\nSo Romeo would, were he not Romeo call'd,\nRetain that dear perfection which he owes\nWithout that title. Romeo, doff thy name,\nAnd for that name which is no part of thee\nTake all myself.\n\nROMEO\nI take thee at thy word:\nCall me but love, and I'll be new baptized;\nHenceforth I never will be Romeo.\n\nJULIET\nWhat man art thou that thus bescreen'd in night\nSo stumblest on my counsel?\nRomeo and Juliet\nExcerpt from Act 2, Scene 2\n\nJULIET\nO Romeo, Romeo! wherefore art thou Romeo?\nDeny thy father and refuse thy name;\nOr, if thou wilt not, be but sworn my love,\nAnd I'll no longer be a Capulet.\n\nROMEO\n[Aside] Shall I hear more, or shall I speak at this?\n\nJULIET\n'Tis but thy name that is my enemy;\nThou art thyself, though not a Montague.\nWhat's Montague? it is nor hand, nor foot,\nNor arm, nor face, nor any other part\nBelonging to a man. O, be some other name!\nWhat's in a name? that which we call a rose\nBy any other name would smell as sweet;\nSo Romeo would, were he not Romeo call'd,\nRetain that dear perfection which he owes\nWithout that title. Romeo, doff thy name,\nAnd for that name which is no part of thee\nTake all myself.\n\nROMEO\nI take thee at thy word:\nCall me but love, and I'll be new baptized;\nHenceforth I never will be Romeo.\n\nJULIET\nWhat man art thou that thus bescreen'd in night\nSo stumblest on my counsel?\nRomeo and Juliet\nExcerpt from Act 2, Scene 2\n\nJULIET\nO Romeo, Romeo! wherefore art thou Romeo?\nDeny thy father and refuse thy name;\nOr, if thou wilt not, be but sworn my love,\nAnd I'll no longer be a Capulet.\n\nROMEO\n[Aside] Shall I hear more, or shall I speak at this?\n\nJULIET\n'Tis but thy name that is my enemy;\nThou art thysel" <> ...
+```
+
 ## Quick Start
 
 ### Basic Compression and Decompression
 
 ```elixir
 # Simple round-trip with Zstd
-original = "The quick brown fox jumps over the lazy dog"
+# original = String.duplicate("The quick brown fox jumps over the lazy dog", 100)
 {:ok, compressed} = ExCodecs.encode(:zstd, original)
 {:ok, recovered} = ExCodecs.decode(:zstd, compressed)
 
 IO.puts("Original size:   #{byte_size(original)} bytes")
 IO.puts("Compressed size: #{byte_size(compressed)} bytes")
-IO.puts("Recovered:       #{recovered}")
 IO.puts("Round-trip OK:   #{recovered == original}")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Original size:   94200 bytes
+Compressed size: 562 bytes
+Round-trip OK:   true
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ### Codec Options
@@ -105,6 +201,21 @@ IO.puts("Bzip2 block 1: #{byte_size(bz_small)} bytes")
 IO.puts("Bzip2 block 9: #{byte_size(bz_max)} bytes")
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Level 1:  573 bytes
+Level 22: 555 bytes
+Bzip2 block 1: 1311 bytes
+Bzip2 block 9: 1311 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ### Blosc2 for Numerical Data
 
 ```elixir
@@ -119,6 +230,20 @@ IO.puts("Blosc2 (no shuffle): #{byte_size(plain)} bytes")
 IO.puts("Blosc2 (byte shuffle): #{byte_size(shuffled)} bytes")
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+Original:        4096 bytes
+Blosc2 (no shuffle): 73 bytes
+Blosc2 (byte shuffle): 73 bytes
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
 ## Available Codecs
 
 ```elixir
@@ -126,6 +251,20 @@ codecs = ExCodecs.available_codecs()
 IO.puts("Shared catalog: #{inspect(codecs)}")
 IO.puts("Compression:    #{inspect(ExCodecs.available_codecs(:compression))}")
 IO.puts("Spatial:        #{inspect(ExCodecs.available_codecs(:spatial))}")
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+Shared catalog: [:blosc2, :bzip2, :gsplat, :lz4, :ply, :snappy, :spatial_binary, :zstd]
+Compression:    [:blosc2, :bzip2, :lz4, :snappy, :zstd]
+Spatial:        [:gsplat, :ply, :spatial_binary]
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
 ```
 
 ### Codec Details
@@ -144,16 +283,91 @@ for codec <- codecs do
 end
 ```
 
+<!-- livebook:{"output":true} -->
+
+```
+--------------------------------------------------
+Codec:         blosc2
+Category:      compression
+Interface:     binary
+Native?:       true
+Streaming?:    false
+Configurable?: true
+Version:       c-blosc2-chunk/pure-rust
+--------------------------------------------------
+Codec:         bzip2
+Category:      compression
+Interface:     binary
+Native?:       true
+Streaming?:    false
+Configurable?: true
+Version:       bzip2-0.6/libbz2-rs
+--------------------------------------------------
+Codec:         gsplat
+Category:      spatial
+Interface:     spatial
+Native?:       false
+Streaming?:    false
+Configurable?: false
+Version:       GSPL 1
+--------------------------------------------------
+Codec:         lz4
+Category:      compression
+Interface:     binary
+Native?:       true
+Streaming?:    false
+Configurable?: false
+Version:       lz4_flex-0.11
+--------------------------------------------------
+Codec:         ply
+Category:      spatial
+Interface:     spatial
+Native?:       false
+Streaming?:    false
+Configurable?: true
+Version:       PLY 1.0
+--------------------------------------------------
+Codec:         snappy
+Category:      compression
+Interface:     binary
+Native?:       true
+Streaming?:    false
+Configurable?: false
+Version:       snap-1.1
+--------------------------------------------------
+Codec:         spatial_binary
+Category:      spatial
+Interface:     spatial
+Native?:       false
+Streaming?:    false
+Configurable?: false
+Version:       EXCP 1
+--------------------------------------------------
+Codec:         zstd
+Category:      compression
+Interface:     binary
+Native?:       true
+Streaming?:    false
+Configurable?: true
+Version:       structured-zstd-0.0.48
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok, :ok, :ok, :ok, :ok, :ok]
+```
+
 ### Codec Feature Summary
 
-| Codec     | Category    | Configurable           | Streaming | Best For                       |
-| --------- | ----------- | ---------------------- | --------- | ------------------------------ |
-| `:zstd`   | compression | Yes (level 1–22)     | No        | General-purpose, high ratio    |
-| `:lz4`    | compression | No                     | No        | Real-time, low latency         |
-| `:snappy` | compression | No                     | No        | Short-lived data, low overhead |
-| `:bzip2`  | compression | Yes (block_size 1–9) | No        | Archival, maximum ratio        |
-| `:blosc2` | compression | Yes (codec/shuffle)    | No        | Numerical/array data           |
-| `:ply` / `:spatial_binary` / `:gsplat` | spatial | Format-specific | No | Point clouds / Gaussians |
+| Codec                                  | Category    | Configurable           | Streaming | Best For                       |
+| -------------------------------------- | ----------- | ---------------------- | --------- | ------------------------------ |
+| `:zstd`                                | compression | Yes (level 1–22)     | No        | General-purpose, high ratio    |
+| `:lz4`                                 | compression | No                     | No        | Real-time, low latency         |
+| `:snappy`                              | compression | No                     | No        | Short-lived data, low overhead |
+| `:bzip2`                               | compression | Yes (block_size 1–9) | No        | Archival, maximum ratio        |
+| `:blosc2`                              | compression | Yes (codec/shuffle)    | No        | Numerical/array data           |
+| `:ply` / `:spatial_binary` / `:gsplat` | spatial     | Format-specific        | No        | Point clouds / Gaussians       |
 
 ## Error Handling
 
@@ -168,9 +382,20 @@ IO.puts("Message: #{err.message}")
 IO.puts("Reason:  #{err.reason}")
 ```
 
-## What's Next?
+<!-- livebook:{"output":true} -->
 
-* **[Compression Fundamentals](02_compression_fundamentals.livemd)** — theory, trade-offs, and interactive benchmarks
-* **[Codec Comparison](03_codec_comparison.livemd)** — side-by-side performance analysis
-* **[Building Storage Systems](04_building_storage_systems.livemd)** — practical patterns for production use
-* **[Zarr-Style Workloads](05_zarr_style_workloads.livemd)** — scientific dataset compression with Blosc2
+```
+Reason:  unsupported_codec
+Message: The specified codec is not supported
+Reason:  invalid_data
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+:ok
+```
+
+## Navigation
+
+**Next:** [Compression Fundamentals](02_compression_fundamentals.livemd)
