@@ -42,9 +42,16 @@ normal `{0,0,0}`). Mixed optional fields therefore round-trip with defaults fill
 
 ### Streaming
 
-`stream_decode` / `stream_encode` currently **materialize** the full payload (or
-enumerable) then enumerate. Prefer explicit `source: :file` or `source: :binary`
-when the argument is ambiguous.
+- **EXCP / GSPL / PLY + `source: :file`** (or `:auto` path detection): header
+  then one record/vertex at a time from disk (bounded memory). Binary PLY uses
+  a fixed property stride; ASCII PLY reads lines.
+- In-memory binaries still **materialize** through `decode/2`, then enumerate.
+- `stream_encode` still collects the enumerable, then encodes once.
+- `encode_to_file/3` with an explicit `:schema` streams EXCP/GSPL to disk
+  (placeholder header + seek-back count). Without `:schema`, encode then write.
+
+Prefer explicit `source: :file` or `source: :binary` when the argument is
+ambiguous. A future Rust backend may memory-map large in-memory binaries.
 
 `:auto` treats a binary as a path only when it looks path-like (under 4 KiB, no
 `ply`/`EXCP`/`GSPL` magic, and contains `/` or `\` or ends with `.ply`/`.excp`/
@@ -82,6 +89,11 @@ zero-filled (alpha default 255).
 after `count` records are ignored. Truncation yields `:invalid_data` /
 `:truncated_input` as implemented.
 
+**Streaming:** `stream_decode` with `source: :file` reads the 16-byte header,
+then each record via `IO.binread/2` (bounded memory). In-memory binaries still
+materialize through `decode/2`. `stream_encode_to_file/3` requires `:schema`
+(e.g. `schema: [:color]`) and patches the count after writing records.
+
 ## GSPL — `:gsplat` (version 1)
 
 Little-endian compact Gaussian clouds.
@@ -109,6 +121,12 @@ with zeros on encode).
 
 **Not stored:** per-Gaussian metadata maps, cloud metadata. Flags on decode are
 currently informational; `sh_rest` count in the header is authoritative.
+
+**Streaming:** `stream_decode` with `source: :file` reads the 18-byte header,
+then each record via `IO.binread/2` (bounded memory). In-memory binaries still
+materialize through `decode/2`. `stream_encode_to_file/3` requires `:schema`
+(e.g. `schema: []` or `schema: [sh_rest: 6]`) and patches the count after
+writing records.
 
 ## Integrity
 

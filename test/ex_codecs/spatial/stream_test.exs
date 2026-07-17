@@ -66,4 +66,37 @@ defmodule ExCodecs.Spatial.StreamTest do
     {:ok, bin} = Spatial.encode(cloud, format: :ply)
     assert [%Point{}] = ExCodecs.stream_decode(bin, format: :ply) |> Enum.to_list()
   end
+
+  test "encode_to_file with schema streams EXCP" do
+    alias ExCodecs.Spatial.Stream, as: SpatialStream
+
+    points = [Point.new(1.0, 2.0, 3.0, color: {1, 2, 3})]
+
+    path =
+      Path.join(
+        System.tmp_dir!(),
+        "ex_codecs_stream_enc_#{System.unique_integer([:positive])}.excp"
+      )
+
+    on_exit(fn -> File.rm(path) end)
+
+    assert :ok =
+             SpatialStream.encode_to_file(points, path,
+               format: :spatial_binary,
+               schema: [:color]
+             )
+
+    assert [%Point{color: {1, 2, 3}}] =
+             Spatial.stream_decode(path, format: :spatial_binary, source: :file) |> Enum.to_list()
+  end
+
+  test "encode_to_file schema requires EXCP or GSPL format" do
+    alias ExCodecs.Spatial.Stream, as: SpatialStream
+
+    assert {:error, %{reason: :invalid_options}} =
+             SpatialStream.encode_to_file([Point.new(0, 0, 0)], "x.ply",
+               format: :ply,
+               schema: []
+             )
+  end
 end

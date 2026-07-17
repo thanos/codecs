@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- EXCP (`:spatial_binary`), GSPL (`:gsplat`), and PLY `stream_decode` with
+  `source: :file` (or `:auto` path detection) now read the header and then
+  **one record/vertex at a time** from disk (bounded memory). Binary PLY uses
+  a fixed stride; ASCII PLY reads lines. In-memory binaries still materialize;
+  a future Rust backend may memory-map those.
+
+### Added
+
+- `Binary.stream_encode_to_file/3` and `Gsplat.stream_encode_to_file/3` —
+  incremental file writes with an explicit `:schema` (placeholder header,
+  seek-back count). `Spatial.Stream.encode_to_file/3` uses these when
+  `:schema` is present with `format: :spatial_binary` or `:gsplat`.
+
 ## [0.2.0] - 2026-07-16
 
 ### Added

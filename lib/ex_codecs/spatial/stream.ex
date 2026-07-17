@@ -2,9 +2,17 @@ defmodule ExCodecs.Spatial.Stream do
   @moduledoc """
   Stream helpers for spatial formats.
 
-  **Important:** despite the name, most paths **materialize** the full source
-  (or full enumerable) then yield items. True incremental I/O for multi-GB
-  files is not implemented yet.
+  ## What actually streams today
+
+    * **EXCP** (`:spatial_binary`), **GSPL** (`:gsplat`), and **PLY** with
+      `source: :file` (or `:auto` path detection) read the header, then one
+      record/vertex at a time from disk — O(header + one record) memory.
+      Binary PLY uses a fixed stride; ASCII PLY reads lines.
+    * In-memory binaries still **materialize** through `decode/2`, then yield.
+      A future Rust backend may memory-map large binaries.
+    * **`encode_to_file/3`** with an explicit `:schema` streams EXCP/GSPL to
+      disk (placeholder header, then seek-back count patch). Without `:schema`,
+      encoding still collects in memory first.
 
   Prefer `source: :file` when the argument is a filesystem path, or
   `source: :binary` when it is an encoded payload. With `:auto` (default), a
@@ -22,8 +30,8 @@ defmodule ExCodecs.Spatial.Stream do
   @doc """
   Returns an enumerable over points or Gaussians decoded from a path or binary.
 
-  The complete source and decoded cloud are currently materialized before
-  elements are emitted.
+  EXCP/GSPL/PLY file sources stream incrementally; in-memory binaries still
+  materialize before emitting elements.
 
   ## Arguments
 
@@ -42,7 +50,7 @@ defmodule ExCodecs.Spatial.Stream do
 
     * `reason: :invalid_options` — `:format` is absent.
     * `reason: :unsupported_codec` — `:format` is unknown.
-    * `reason: :io_error` — a selected file cannot be read.
+    * `reason: :io_error` — a selected file cannot be opened or read.
     * `reason: :invalid_data` — the payload is malformed, unsupported, or
       truncated.
 
@@ -184,15 +192,22 @@ defmodule ExCodecs.Spatial.Stream do
   @doc """
   Encodes spatial data and writes the binary to `path`.
 
+  When `:schema` is present and `:format` is `:spatial_binary` or `:gsplat`,
+  points/Gaussians are written incrementally via
+  `Binary.stream_encode_to_file/3` / `Gsplat.stream_encode_to_file/3`
+  (placeholder header + seek-back count). Otherwise the payload is encoded in
+  memory and written with `File.write/2`.
+
   ## Arguments
 
     * `data` (`PointCloud.t() | GaussianCloud.t() | Enumerable.t()`) — a cloud,
       or an enumerable of `%Point{}`/`%Gaussian{}` values.
-    * `path` (`Path.t()`) — destination accepted by `File.write/2`; parent
-      directories must already exist.
+    * `path` (`Path.t()`) — destination path; parent directories must already
+      exist.
     * `opts` (`keyword()`) — the options for `ExCodecs.Spatial.encode/2`, with
       `:format` required for enumerable input and defaulting to `:ply` for an
-      already-built cloud.
+      already-built cloud. For streaming EXCP/GSPL writes, pass `:schema`
+      (see codec docs).
 
   ## Returns
 
@@ -200,15 +215,14 @@ defmodule ExCodecs.Spatial.Stream do
     * any `:invalid_options`, `:unsupported_codec`, or `:invalid_data` error
       returned by encoding.
     * `{:error, %ExCodecs.Error{reason: :io_error, details: reason}}` when
-      `File.write/2` returns a file/POSIX error such as `:enoent`, `:eacces`,
-      or `:enospc`.
+      a file/POSIX error occurs (e.g. `:enoent`, `:eacces`, `:enospc`).
 
   ## Raises / exceptions
 
-  Normal `File.write/2` path/POSIX failures are returned. Invalid path terms or
-  non-path binaries can raise `FunctionClauseError` or `ArgumentError` in the
-  path/file APIs. Encoding also has the enumerable, keyword, and
-  malformed-struct exceptions documented by `encode/2`.
+  Normal path/POSIX failures are returned. Invalid path terms or non-path
+  binaries can raise `FunctionClauseError` or `ArgumentError` in the path/file
+  APIs. Encoding also has the enumerable, keyword, and malformed-struct
+  exceptions documented by `encode/2`.
 
   ## Examples
 
@@ -222,6 +236,50 @@ defmodule ExCodecs.Spatial.Stream do
   @spec encode_to_file(Enumerable.t() | PointCloud.t() | GaussianCloud.t(), Path.t(), keyword()) ::
           :ok | {:error, Error.t()}
   def encode_to_file(data, path, opts \\ []) do
+    case stream_encode_to_file_if_schema(data, path, opts) do
+      :not_streaming ->
+        write_encoded_payload(data, path, opts)
+
+      result ->
+        result
+    end
+  end
+
+  defp stream_encode_to_file_if_schema(data, path, opts) do
+    if Keyword.has_key?(opts, :schema) do
+      case Keyword.get(opts, :format) do
+        :spatial_binary ->
+          Binary.stream_encode_to_file(enumerable_points(data), path, opts)
+
+        :gsplat ->
+          Gsplat.stream_encode_to_file(enumerable_gaussians(data), path, opts)
+
+        other when other in [:ply, nil] ->
+          {:error,
+           Error.new(:invalid_options,
+             message:
+               "encode_to_file schema streaming requires format: :spatial_binary or :gsplat"
+           )}
+
+        other ->
+          {:error,
+           Error.new(:unsupported_codec,
+             codec: other,
+             message: "Unsupported spatial stream format: #{inspect(other)}"
+           )}
+      end
+    else
+      :not_streaming
+    end
+  end
+
+  defp enumerable_points(%PointCloud{points: points}), do: points
+  defp enumerable_points(enumerable), do: enumerable
+
+  defp enumerable_gaussians(%GaussianCloud{gaussians: gs}), do: gs
+  defp enumerable_gaussians(enumerable), do: enumerable
+
+  defp write_encoded_payload(data, path, opts) do
     result =
       case data do
         %PointCloud{} -> ExCodecs.Spatial.encode(data, opts)
@@ -256,56 +314,9 @@ defmodule ExCodecs.Spatial.Stream do
     {:error, Error.new(:unsupported_codec, codec: other)}
   end
 
-  defp stream_binary(source, opts) do
-    case resolve_source(source, opts) do
-      {:ok, bin} -> Binary.stream_decode(bin, opts)
-      {:error, error} -> error_stream(error)
-    end
-  end
-
-  defp stream_gsplat(source, opts) do
-    case resolve_source(source, opts) do
-      {:ok, bin} -> Gsplat.stream_decode(bin, opts)
-      {:error, error} -> error_stream(error)
-    end
-  end
-
-  defp resolve_source(bin, opts) when is_binary(bin) do
-    case Keyword.get(opts, :source, :auto) do
-      :binary ->
-        {:ok, bin}
-
-      :file ->
-        read_file(bin)
-
-      :auto ->
-        if path_like?(bin) and File.regular?(bin) do
-          read_file(bin)
-        else
-          {:ok, bin}
-        end
-    end
-  end
-
-  defp path_like?(bin) do
-    byte_size(bin) < 4096 and
-      not String.starts_with?(bin, "EXCP") and
-      not String.starts_with?(bin, "GSPL") and
-      not String.starts_with?(bin, "ply") and
-      (String.contains?(bin, "/") or String.contains?(bin, "\\") or
-         String.ends_with?(bin, [".excp", ".gspl", ".bin", ".ply"]))
-  end
-
-  defp read_file(path) do
-    case File.read(path) do
-      {:ok, data} ->
-        {:ok, data}
-
-      {:error, reason} ->
-        {:error,
-         Error.new(:io_error, message: "Failed to read file: #{inspect(reason)}", details: reason)}
-    end
-  end
+  # EXCP/GSPL resolve :source and stream from disk themselves (no full File.read).
+  defp stream_binary(source, opts), do: Binary.stream_decode(source, opts)
+  defp stream_gsplat(source, opts), do: Gsplat.stream_decode(source, opts)
 
   defp error_stream(error) do
     Stream.resource(

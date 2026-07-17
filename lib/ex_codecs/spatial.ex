@@ -46,8 +46,9 @@ defmodule ExCodecs.Spatial do
 
   ## Streaming note
 
-  `stream_decode` / `stream_encode` currently materialize full payloads, then
-  enumerate. Prefer `source: :file` when the argument is a path, or
+  EXCP (`:spatial_binary`) and GSPL (`:gsplat`) **file** sources stream
+  record-by-record from disk. PLY and in-memory binaries still materialize,
+  then enumerate. Prefer `source: :file` for large EXCP/GSPL paths, or
   `source: :binary` for payloads. See `docs/spatial_formats.md` for `:auto`
   path heuristics and wire-format layouts.
   """

@@ -368,8 +368,9 @@ clouds. Magic bytes: `"GSPL"`.
 Wire layouts and schema rules are frozen in
 [Spatial wire formats](../docs/spatial_formats.md).
 
-Stream helpers today **materialize** the full payload, then enumerate. Prefer
-explicit `source: :file` or `source: :binary`.
+Stream helpers: EXCP/GSPL **files** decode record-by-record from disk; PLY and
+in-memory binaries still materialize. Prefer explicit `source: :file` or
+`source: :binary`.
 
 ## Why a separate `ExCodecs.Spatial` API?
 

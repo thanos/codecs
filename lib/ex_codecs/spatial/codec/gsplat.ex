@@ -96,6 +96,142 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   end
 
   @doc """
+  Streams `%Gaussian{}` values to a GSPL file using an explicit schema.
+
+  Writes a placeholder header, encodes each Gaussian as it arrives, then seeks
+  back to patch the final count. Peak memory is O(one Gaussian).
+
+  ## Arguments
+
+    * `enumerable` (`Enumerable.t()`) — `%Gaussian{}` elements.
+    * `path` (`Path.t()`) — destination file path.
+    * `opts` (`keyword()`) — requires `:schema`. Use `[]` / `%{}` for no SH
+      rest coefficients, or `[sh_rest: n]` / `%{sh_rest: n}` for `n` shared
+      rest floats per Gaussian (shorter lists are zero-padded).
+
+  ## Returns
+
+    * `:ok`
+    * `{:error, %ExCodecs.Error{reason: :invalid_options}}` when `:schema` is
+      missing or invalid
+    * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when an element is not
+      a `%Gaussian{}`
+    * `{:error, %ExCodecs.Error{reason: :io_error}}` on file failures
+
+  ## Examples
+
+      iex> alias ExCodecs.Spatial.{Gaussian, Codec.Gsplat}
+      iex> path = Path.join(System.tmp_dir!(), "gspl_enc_#{System.unique_integer([:positive])}.gspl")
+      iex> :ok = Gsplat.stream_encode_to_file([Gaussian.new({0, 0, 0})], path, schema: [])
+      iex> {:ok, <<"GSPL", _::binary>>} = File.read(path)
+      iex> File.rm!(path)
+      :ok
+  """
+  @spec stream_encode_to_file(Enumerable.t(), Path.t(), keyword()) :: :ok | {:error, Error.t()}
+  def stream_encode_to_file(enumerable, path, opts \\ []) do
+    with {:ok, sh_rest} <- fetch_schema_sh_rest(opts),
+         {:ok, io} <- open_write(path) do
+      flags = if sh_rest > 0, do: 1, else: 0
+
+      try do
+        :ok = IO.binwrite(io, gspl_header(flags, 0, sh_rest))
+
+        count =
+          Enum.reduce(enumerable, 0, fn
+            %Gaussian{} = g, n ->
+              :ok = IO.binwrite(io, encode_gaussian(g, sh_rest))
+              n + 1
+
+            other, _n ->
+              throw({:bad_gaussian, other})
+          end)
+
+        {:ok, 0} = :file.position(io, 0)
+        :ok = IO.binwrite(io, gspl_header(flags, count, sh_rest))
+        :ok
+      catch
+        {:bad_gaussian, other} ->
+          {:error,
+           Error.new(:invalid_data,
+             codec: :gsplat,
+             message: "GSPL stream encode expects Gaussian structs, got: #{inspect(other)}"
+           )}
+      after
+        File.close(io)
+      end
+    end
+  end
+
+  defp fetch_schema_sh_rest(opts) do
+    case Keyword.fetch(opts, :schema) do
+      :error ->
+        {:error,
+         Error.new(:invalid_options,
+           codec: :gsplat,
+           message: "GSPL stream_encode_to_file requires schema: (e.g. schema: [sh_rest: 0])"
+         )}
+
+      {:ok, schema} ->
+        schema_to_sh_rest(schema)
+    end
+  end
+
+  defp schema_to_sh_rest(schema) when is_list(schema) do
+    sh_rest = Keyword.get(schema, :sh_rest, 0)
+
+    unknown =
+      schema
+      |> Enum.reject(fn
+        {:sh_rest, _} -> true
+        :sh_rest -> true
+        _ -> false
+      end)
+
+    cond do
+      unknown != [] ->
+        {:error,
+         Error.new(:invalid_options,
+           codec: :gsplat,
+           message: "Unknown GSPL schema entries: #{inspect(unknown)}"
+         )}
+
+      not is_integer(sh_rest) or sh_rest < 0 ->
+        {:error,
+         Error.new(:invalid_options,
+           codec: :gsplat,
+           message: "schema sh_rest must be a non-negative integer"
+         )}
+
+      true ->
+        {:ok, sh_rest}
+    end
+  end
+
+  defp schema_to_sh_rest(schema) when is_map(schema) do
+    schema_to_sh_rest(Map.to_list(schema))
+  end
+
+  defp schema_to_sh_rest(other) do
+    {:error,
+     Error.new(:invalid_options,
+       codec: :gsplat,
+       message: "GSPL schema must be a list or map, got: #{inspect(other)}"
+     )}
+  end
+
+  defp gspl_header(flags, count, sh_rest) do
+    <<@magic::binary, @version::little-unsigned-16, flags::little-unsigned-16,
+      count::little-unsigned-64, sh_rest::little-unsigned-16>>
+  end
+
+  defp open_write(path) do
+    case File.open(path, [:write, :binary, :raw, :read]) do
+      {:ok, io} -> {:ok, io}
+      {:error, reason} -> io_error(reason)
+    end
+  end
+
+  @doc """
   Decodes a GSPL version 1 payload into a Gaussian cloud.
 
   The decoder reads the header and declared record count described by
@@ -158,25 +294,39 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   end
 
   @doc """
-  Returns an enumerable over Gaussians in a GSPL payload.
+  Returns an enumerable over Gaussians in a GSPL payload or file.
+
+  ## Streaming behavior
+
+    * `source: :file` (or `:auto` when the argument looks like a path to a
+      regular file) reads the 18-byte header, then **one record at a time**
+      via `IO.binread/2`. Peak memory is O(header + one record).
+    * `source: :binary` (or `:auto` for an in-memory GSPL payload) still
+      materializes through `decode/2`, then yields the list. A future Rust
+      backend may memory-map large binaries instead.
+
+  Prefer `source: :file` for large `.gspl` paths.
 
   ## Arguments
 
-    * `data` (`binary()`) — a complete GSPL payload.
-    * `opts` (`keyword()`) — reserved and currently ignored.
+    * `source` (`Path.t() | binary()`) — filesystem path or complete GSPL
+      payload. Both are binaries, so `:source` controls resolution.
+    * `opts` (`keyword()`) — `:source` may be `:auto` (default), `:file`, or
+      `:binary`.
 
   ## Returns
 
-  An `Enumerable.t()` that yields decoded `%Gaussian{}` structs after the
-  complete cloud has been materialized. If `decode/2` fails, it yields exactly
-  one `{:error, %ExCodecs.Error{reason: :invalid_data, codec: :gsplat}}`
-  element.
+  An `Enumerable.t()` yielding `%Gaussian{}` values. Failures are delayed until
+  enumeration as exactly one `{:error, %ExCodecs.Error{}}`:
+
+    * `reason: :io_error` — the file cannot be opened or read
+    * `reason: :invalid_data` — bad magic/version, truncated header, or a
+      truncated record mid-stream (`codec: :gsplat`)
 
   ## Raises / exceptions
 
-  Raises `FunctionClauseError` when `data` is not a binary because this public
-  function is guarded. `opts` is ignored. Binary validation failures are
-  delayed as the single error element rather than raised.
+  Raises `FunctionClauseError` when `source` is not a binary. Unsupported
+  `:source` values raise `CaseClauseError`.
 
   ## Examples
 
@@ -185,22 +335,155 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
       iex> [%Gaussian{opacity: 1.0}] =
       ...>   ExCodecs.Spatial.Codec.Gsplat.stream_decode(bin) |> Enum.to_list()
   """
-  @spec stream_decode(binary(), keyword()) :: Enumerable.t()
-  def stream_decode(data, opts \\ []) when is_binary(data) do
-    case decode(data, opts) do
+  @spec stream_decode(Path.t() | binary(), keyword()) :: Enumerable.t()
+  def stream_decode(source, opts \\ [])
+
+  def stream_decode(data, opts) when is_binary(data) do
+    case resolve_source(data, opts) do
+      {:ok, :binary, bin} ->
+        stream_from_binary(bin, opts)
+
+      {:ok, :file, path} ->
+        Stream.resource(
+          fn -> open_gspl_file(path) end,
+          &next_gspl_item/1,
+          &close_gspl_file/1
+        )
+    end
+  end
+
+  defp stream_from_binary(bin, opts) do
+    case decode(bin, opts) do
       {:ok, %GaussianCloud{gaussians: gs}} ->
         Stream.map(gs, & &1)
 
       {:error, error} ->
-        Stream.resource(
-          fn -> {:error, error} end,
-          fn
-            {:error, e} -> {[{:error, e}], :done}
-            :done -> {:halt, :done}
-          end,
-          fn _ -> :ok end
-        )
+        error_stream(error)
     end
+  end
+
+  defp resolve_source(bin, opts) do
+    case Keyword.get(opts, :source, :auto) do
+      :binary ->
+        {:ok, :binary, bin}
+
+      :file ->
+        {:ok, :file, bin}
+
+      :auto ->
+        if path_like?(bin) and File.regular?(bin) do
+          {:ok, :file, bin}
+        else
+          {:ok, :binary, bin}
+        end
+    end
+  end
+
+  defp path_like?(bin) do
+    byte_size(bin) < 4096 and not String.starts_with?(bin, @magic) and
+      (String.contains?(bin, "/") or String.contains?(bin, "\\") or
+         String.ends_with?(bin, [".gspl", ".bin"]))
+  end
+
+  defp open_gspl_file(path) do
+    case File.open(path, [:read, :binary, :raw]) do
+      {:ok, io} -> parse_gspl_header(io, IO.binread(io, 18))
+      {:error, reason} -> io_error(reason)
+    end
+  end
+
+  defp parse_gspl_header(
+         io,
+         <<@magic::binary, version::little-unsigned-16, _flags::little-unsigned-16,
+           count::little-unsigned-64, sh_rest::little-unsigned-16>>
+       ) do
+    if version != @version do
+      File.close(io)
+
+      {:error,
+       Error.new(:invalid_data,
+         codec: :gsplat,
+         message: "Unsupported GSPLAT version #{version}"
+       )}
+    else
+      {:ok, io, sh_rest, count, record_stride(sh_rest), 0}
+    end
+  end
+
+  defp parse_gspl_header(io, :eof) do
+    File.close(io)
+    {:error, Error.new(:invalid_data, codec: :gsplat, message: "Invalid GSPLAT binary")}
+  end
+
+  defp parse_gspl_header(io, data) when is_binary(data) do
+    File.close(io)
+    {:error, Error.new(:invalid_data, codec: :gsplat, message: "Invalid GSPLAT binary")}
+  end
+
+  defp parse_gspl_header(io, {:error, reason}) do
+    File.close(io)
+    io_error(reason)
+  end
+
+  defp next_gspl_item({:ok, io, _sh_rest, count, _stride, i}) when i >= count do
+    {:halt, {:done, io}}
+  end
+
+  defp next_gspl_item({:ok, io, sh_rest, count, stride, i}) do
+    case IO.binread(io, stride) do
+      data when is_binary(data) and byte_size(data) == stride ->
+        case decode_gaussian(data, sh_rest) do
+          {:ok, gaussian, _} ->
+            {[gaussian], {:ok, io, sh_rest, count, stride, i + 1}}
+
+          {:error, error} ->
+            {[{:error, error}], {:done, io}}
+        end
+
+      :eof ->
+        {[
+           {:error, Error.new(:invalid_data, codec: :gsplat, message: "Truncated Gaussian record")}
+         ], {:done, io}}
+
+      data when is_binary(data) ->
+        {[
+           {:error, Error.new(:invalid_data, codec: :gsplat, message: "Truncated Gaussian record")}
+         ], {:done, io}}
+
+      {:error, reason} ->
+        {[{:error, io_error_struct(reason)}], {:done, io}}
+    end
+  end
+
+  defp next_gspl_item({:error, error}), do: {[{:error, error}], :done}
+  defp next_gspl_item({:done, _io}), do: {:halt, :done}
+  defp next_gspl_item(:done), do: {:halt, :done}
+
+  defp close_gspl_file({:ok, io, _, _, _, _}), do: File.close(io)
+  defp close_gspl_file({:done, io}), do: File.close(io)
+  defp close_gspl_file(_), do: :ok
+
+  defp record_stride(sh_rest), do: 56 + sh_rest * 4
+
+  defp io_error(reason), do: {:error, io_error_struct(reason)}
+
+  defp io_error_struct(reason) do
+    Error.new(:io_error,
+      codec: :gsplat,
+      message: "Failed to read GSPL file: #{inspect(reason)}",
+      details: reason
+    )
+  end
+
+  defp error_stream(error) do
+    Stream.resource(
+      fn -> {:error, error} end,
+      fn
+        {:error, e} -> {[{:error, e}], :done}
+        :done -> {:halt, :done}
+      end,
+      fn _ -> :ok end
+    )
   end
 
   defp max_sh_rest(gaussians) do

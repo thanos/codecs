@@ -195,8 +195,13 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   @doc """
   Returns an enumerable over vertices from a PLY path or binary.
 
-  Both modes currently read and decode the entire payload before yielding
-  elements; this is not incremental PLY parsing.
+  ## Streaming behavior
+
+    * `source: :file` (or `:auto` path detection): scans the header until
+      `end_header`, then yields one vertex at a time — binary formats via
+      fixed-stride `IO.binread/2`, ASCII via line reads. Peak memory is
+      O(header + one vertex / read chunk), not the whole cloud.
+    * `source: :binary`: still materializes through `decode/2`, then yields.
 
   ## Arguments
 
@@ -237,9 +242,9 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
       {:ok, :file, path} ->
         Stream.resource(
-          fn -> open_ply_file(path, opts) end,
-          &next_ply_item/1,
-          &close_ply_file/1
+          fn -> open_ply_stream(path, opts) end,
+          &next_ply_stream_item/1,
+          &close_ply_stream/1
         )
     end
   end
@@ -773,36 +778,35 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
   defp decode_gaussians(body, parsed) do
     with {:ok, points} <- decode_vertices(body, parsed) do
-      gaussians =
-        Enum.map(points, fn %Point{} = p ->
-          # Point.new/4 normalizes attribute keys to strings.
-          attrs = p.attributes
-
-          Gaussian.new({p.x, p.y, p.z},
-            color: {
-              Map.get(attrs, "f_dc_0", 0.5),
-              Map.get(attrs, "f_dc_1", 0.5),
-              Map.get(attrs, "f_dc_2", 0.5)
-            },
-            opacity: Map.get(attrs, "opacity", 1.0),
-            scale: {
-              Map.get(attrs, "scale_0", 1.0),
-              Map.get(attrs, "scale_1", 1.0),
-              Map.get(attrs, "scale_2", 1.0)
-            },
-            rotation: {
-              Map.get(attrs, "rot_0", 1.0),
-              Map.get(attrs, "rot_1", 0.0),
-              Map.get(attrs, "rot_2", 0.0),
-              Map.get(attrs, "rot_3", 0.0)
-            },
-            sh: extract_sh(attrs),
-            metadata: attrs
-          )
-        end)
-
-      {:ok, gaussians}
+      {:ok, Enum.map(points, &point_to_gaussian/1)}
     end
+  end
+
+  defp point_to_gaussian(%Point{} = p) do
+    # Point.new/4 normalizes attribute keys to strings.
+    attrs = p.attributes
+
+    Gaussian.new({p.x, p.y, p.z},
+      color: {
+        Map.get(attrs, "f_dc_0", 0.5),
+        Map.get(attrs, "f_dc_1", 0.5),
+        Map.get(attrs, "f_dc_2", 0.5)
+      },
+      opacity: Map.get(attrs, "opacity", 1.0),
+      scale: {
+        Map.get(attrs, "scale_0", 1.0),
+        Map.get(attrs, "scale_1", 1.0),
+        Map.get(attrs, "scale_2", 1.0)
+      },
+      rotation: {
+        Map.get(attrs, "rot_0", 1.0),
+        Map.get(attrs, "rot_1", 0.0),
+        Map.get(attrs, "rot_2", 0.0),
+        Map.get(attrs, "rot_3", 0.0)
+      },
+      sh: extract_sh(attrs),
+      metadata: attrs
+    )
   end
 
   defp extract_sh(attrs) do
@@ -923,6 +927,9 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
   # --- Streaming helpers ----------------------------------------------------
 
+  @header_scan_chunk 4096
+  @header_max_bytes 1_048_576
+
   defp decode_to_list(data, opts) when is_binary(data) do
     case decode(data, opts) do
       {:ok, %PointCloud{points: points}} -> {:ok, points}
@@ -931,30 +938,224 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
-  defp open_ply_file(path, opts) do
-    case File.read(path) do
-      {:ok, data} ->
-        case decode_to_list(data, opts) do
-          {:ok, items} -> {:ok, items}
-          {:error, error} -> {:error, error}
+  defp open_ply_stream(path, opts) do
+    case File.open(path, [:read, :binary, :raw]) do
+      {:ok, io} ->
+        case scan_ply_header(io, "") do
+          {:ok, parsed, leftover} ->
+            as = resolve_as(Keyword.get(opts, :as, :auto), parsed.properties)
+            {:ok, init_ply_stream_state(io, leftover, parsed, as)}
+
+          {:error, error} ->
+            File.close(io)
+            {:error, error}
         end
 
       {:error, reason} ->
+        ply_io_error(reason)
+    end
+  end
+
+  defp init_ply_stream_state(io, leftover, %{format: :ascii} = parsed, as) do
+    {:ascii, io, leftover, parsed, as, 0}
+  end
+
+  defp init_ply_stream_state(io, leftover, %{format: endian} = parsed, as)
+       when endian in [:binary_le, :binary_be] do
+    stride = Enum.reduce(parsed.properties, 0, fn p, acc -> acc + type_size(p.type) end)
+    {:binary, io, leftover, endian, parsed, as, stride, 0}
+  end
+
+  defp scan_ply_header(io, acc) do
+    case IO.binread(io, @header_scan_chunk) do
+      data when is_binary(data) and byte_size(data) > 0 ->
+        buf = acc <> data
+        match_or_continue_header(io, buf)
+
+      :eof ->
+        header_eof_error(acc)
+
+      {:error, reason} ->
+        ply_io_error(reason)
+
+      _other ->
+        header_eof_error(acc)
+    end
+  end
+
+  defp match_or_continue_header(io, buf) do
+    case :binary.match(buf, "end_header") do
+      {pos, len} ->
+        header = binary_part(buf, 0, pos + len)
+        rest = binary_part(buf, pos + len, byte_size(buf) - pos - len)
+
+        with {:ok, parsed} <- parse_header(header) do
+          {:ok, parsed, strip_leading_newlines(rest)}
+        end
+
+      :nomatch when byte_size(buf) > @header_max_bytes ->
         {:error,
-         Error.new(:io_error,
+         Error.new(:invalid_data,
            codec: :ply,
-           message: "Failed to read PLY file: #{inspect(reason)}",
-           details: reason
+           message: "PLY header exceeds #{@header_max_bytes} bytes without end_header"
+         )}
+
+      :nomatch ->
+        scan_ply_header(io, buf)
+    end
+  end
+
+  defp header_eof_error("") do
+    {:error, Error.new(:invalid_data, codec: :ply, message: "PLY header missing end_header")}
+  end
+
+  defp header_eof_error(acc) do
+    case :binary.match(acc, "end_header") do
+      {pos, len} ->
+        header = binary_part(acc, 0, pos + len)
+        rest = binary_part(acc, pos + len, byte_size(acc) - pos - len)
+
+        with {:ok, parsed} <- parse_header(header) do
+          {:ok, parsed, strip_leading_newlines(rest)}
+        end
+
+      :nomatch ->
+        {:error, Error.new(:invalid_data, codec: :ply, message: "PLY header missing end_header")}
+    end
+  end
+
+  defp next_ply_stream_item({:ok, {:binary, io, _buf, _endian, parsed, _as, _stride, i}})
+       when i >= parsed.count do
+    {:halt, {:done, io}}
+  end
+
+  defp next_ply_stream_item({:ok, {:binary, io, buf, endian, parsed, as, stride, i}}) do
+    case take_exact_bytes(io, buf, stride) do
+      {:ok, record, rest} ->
+        {values, _} = unpack_row(record, parsed.properties, endian)
+        item = emit_vertex(values_to_point(values, parsed.properties), as)
+        {[item], {:ok, {:binary, io, rest, endian, parsed, as, stride, i + 1}}}
+
+      {:error, error} ->
+        {[{:error, error}], {:done, io}}
+    end
+  end
+
+  defp next_ply_stream_item({:ok, {:ascii, io, _buf, parsed, _as, i}}) when i >= parsed.count do
+    {:halt, {:done, io}}
+  end
+
+  defp next_ply_stream_item({:ok, {:ascii, io, buf, parsed, as, i}}) do
+    case take_ascii_vertex_line(io, buf) do
+      {:ok, line, rest} ->
+        values = line |> String.split() |> Enum.map(&parse_ascii_number/1)
+        item = emit_vertex(values_to_point(values, parsed.properties), as)
+        {[item], {:ok, {:ascii, io, rest, parsed, as, i + 1}}}
+
+      {:error, error} ->
+        {[{:error, error}], {:done, io}}
+    end
+  end
+
+  defp next_ply_stream_item({:error, error}), do: {[{:error, error}], :done}
+  defp next_ply_stream_item({:done, _io}), do: {:halt, :done}
+  defp next_ply_stream_item(:done), do: {:halt, :done}
+
+  defp close_ply_stream({:ok, {:binary, io, _, _, _, _, _, _}}), do: File.close(io)
+  defp close_ply_stream({:ok, {:ascii, io, _, _, _, _}}), do: File.close(io)
+  defp close_ply_stream({:done, io}), do: File.close(io)
+  defp close_ply_stream(_), do: :ok
+
+  defp emit_vertex(point, :point_cloud), do: point
+  defp emit_vertex(point, :gaussian_cloud), do: point_to_gaussian(point)
+
+  defp take_exact_bytes(_io, buf, n) when byte_size(buf) >= n do
+    <<chunk::binary-size(^n), rest::binary>> = buf
+    {:ok, chunk, rest}
+  end
+
+  defp take_exact_bytes(io, buf, n) do
+    case IO.binread(io, n - byte_size(buf)) do
+      data when is_binary(data) and byte_size(data) > 0 ->
+        take_exact_bytes(io, buf <> data, n)
+
+      :eof ->
+        {:error,
+         Error.new(:invalid_data, codec: :ply, message: "Binary PLY body too short")}
+
+      data when is_binary(data) ->
+        {:error,
+         Error.new(:invalid_data, codec: :ply, message: "Binary PLY body too short")}
+
+      {:error, reason} ->
+        ply_io_error(reason)
+    end
+  end
+
+  defp take_ascii_vertex_line(io, buf) do
+    case split_first_line(buf) do
+      {:ok, line, rest} ->
+        if String.trim(line) == "" do
+          take_ascii_vertex_line(io, rest)
+        else
+          {:ok, String.trim(line), rest}
+        end
+
+      :incomplete ->
+        read_more_ascii_line(io, buf)
+    end
+  end
+
+  defp read_more_ascii_line(io, buf) do
+    case IO.binread(io, @header_scan_chunk) do
+      data when is_binary(data) and byte_size(data) > 0 ->
+        take_ascii_vertex_line(io, buf <> data)
+
+      :eof ->
+        trimmed = String.trim(buf)
+
+        if trimmed == "" do
+          {:error,
+           Error.new(:invalid_data,
+             codec: :ply,
+             message: "Expected more ASCII vertices"
+           )}
+        else
+          {:ok, trimmed, ""}
+        end
+
+      {:error, reason} ->
+        ply_io_error(reason)
+
+      _other ->
+        {:error,
+         Error.new(:invalid_data,
+           codec: :ply,
+           message: "Expected more ASCII vertices"
          )}
     end
   end
 
-  defp next_ply_item({:ok, [item | rest]}), do: {[item], {:ok, rest}}
-  defp next_ply_item({:ok, []}), do: {:halt, :done}
-  defp next_ply_item({:error, error}), do: {[{:error, error}], :done}
-  defp next_ply_item(:done), do: {:halt, :done}
+  defp split_first_line(buf) do
+    case :binary.match(buf, "\n") do
+      {pos, 1} ->
+        line = binary_part(buf, 0, pos) |> String.trim_trailing("\r")
+        rest = binary_part(buf, pos + 1, byte_size(buf) - pos - 1)
+        {:ok, line, rest}
 
-  defp close_ply_file(_), do: :ok
+      :nomatch ->
+        :incomplete
+    end
+  end
+
+  defp ply_io_error(reason) do
+    {:error,
+     Error.new(:io_error,
+       codec: :ply,
+       message: "Failed to read PLY file: #{inspect(reason)}",
+       details: reason
+     )}
+  end
 
   defp error_stream({:error, error}), do: {[{:error, error}], :done}
   defp error_stream(:done), do: {:halt, :done}

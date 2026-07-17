@@ -106,6 +106,148 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   end
 
   @doc """
+  Streams `%Point{}` values to an EXCP file using an explicit schema.
+
+  Writes a placeholder header, encodes each point as it arrives, then seeks
+  back to patch the final count. Peak memory is O(one point), not the cloud.
+
+  ## Arguments
+
+    * `enumerable` (`Enumerable.t()`) — `%Point{}` elements.
+    * `path` (`Path.t()`) — destination file path.
+    * `opts` (`keyword()`) — requires `:schema`, a list such as `[]`,
+      `[:color]`, `[:color, :alpha]`, `[:normal]`, or `[:color, :normal]`.
+      Map form `%{color: true, alpha: false, normal: true}` is also accepted.
+      `:alpha` implies color bytes (RGBA).
+
+  ## Returns
+
+    * `:ok`
+    * `{:error, %ExCodecs.Error{reason: :invalid_options}}` when `:schema` is
+      missing or invalid
+    * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when an element is not
+      a `%Point{}`
+    * `{:error, %ExCodecs.Error{reason: :io_error}}` on file failures
+
+  ## Examples
+
+      iex> alias ExCodecs.Spatial.{Point, Codec.Binary}
+      iex> path = Path.join(System.tmp_dir!(), "excp_enc_#{System.unique_integer([:positive])}.excp")
+      iex> :ok = Binary.stream_encode_to_file([Point.new(1, 2, 3, color: {1, 2, 3})], path, schema: [:color])
+      iex> {:ok, <<"EXCP", _::binary>>} = File.read(path)
+      iex> File.rm!(path)
+      :ok
+  """
+  @spec stream_encode_to_file(Enumerable.t(), Path.t(), keyword()) :: :ok | {:error, Error.t()}
+  def stream_encode_to_file(enumerable, path, opts \\ []) do
+    with {:ok, flags} <- fetch_schema_flags(opts),
+         {:ok, io} <- open_write(path) do
+      try do
+        :ok = IO.binwrite(io, excp_header(flags, 0))
+
+        count =
+          Enum.reduce(enumerable, 0, fn
+            %Point{} = point, n ->
+              :ok = IO.binwrite(io, encode_point(point, flags))
+              n + 1
+
+            other, _n ->
+              throw({:bad_point, other})
+          end)
+
+        {:ok, 0} = :file.position(io, 0)
+        :ok = IO.binwrite(io, excp_header(flags, count))
+        :ok
+      catch
+        {:bad_point, other} ->
+          {:error,
+           Error.new(:invalid_data,
+             codec: :spatial_binary,
+             message: "EXCP stream encode expects Point structs, got: #{inspect(other)}"
+           )}
+      after
+        File.close(io)
+      end
+    end
+  end
+
+  defp fetch_schema_flags(opts) do
+    case Keyword.fetch(opts, :schema) do
+      :error ->
+        {:error,
+         Error.new(:invalid_options,
+           codec: :spatial_binary,
+           message: "EXCP stream_encode_to_file requires schema: (e.g. schema: [:color])"
+         )}
+
+      {:ok, schema} ->
+        schema_to_flags(schema)
+    end
+  end
+
+  defp schema_to_flags(schema) when is_list(schema) do
+    alpha? = schema_flag?(schema, :alpha)
+    color? = alpha? or schema_flag?(schema, :color)
+    normal? = schema_flag?(schema, :normal)
+
+    unknown =
+      schema
+      |> Enum.reject(fn
+        a when is_atom(a) -> a in [:color, :alpha, :normal]
+        {k, _} when is_atom(k) -> k in [:color, :alpha, :normal]
+        _ -> false
+      end)
+
+    if unknown != [] do
+      {:error,
+       Error.new(:invalid_options,
+         codec: :spatial_binary,
+         message: "Unknown EXCP schema entries: #{inspect(unknown)}"
+       )}
+    else
+      {:ok, flags_from_schema(color?, alpha?, normal?)}
+    end
+  end
+
+  defp schema_to_flags(schema) when is_map(schema) do
+    schema_to_flags(Map.to_list(schema))
+  end
+
+  defp schema_to_flags(other) do
+    {:error,
+     Error.new(:invalid_options,
+       codec: :spatial_binary,
+       message: "EXCP schema must be a list or map, got: #{inspect(other)}"
+     )}
+  end
+
+  defp flags_from_schema(color?, alpha?, normal?) do
+    0
+    |> maybe_flag(color?, @flag_color)
+    |> maybe_flag(alpha?, @flag_alpha)
+    |> maybe_flag(normal?, @flag_normal)
+  end
+
+  defp maybe_flag(flags, true, bit), do: Bitwise.bor(flags, bit)
+  defp maybe_flag(flags, false, _bit), do: flags
+
+  defp schema_flag?(schema, key) when is_list(schema) do
+    key in schema or Keyword.get(schema, key, false) == true
+  end
+
+  defp excp_header(flags, count) do
+    <<@magic::binary, @version::little-unsigned-16, flags::little-unsigned-16,
+      count::little-unsigned-64>>
+  end
+
+  defp open_write(path) do
+    case File.open(path, [:write, :binary, :raw, :read]) do
+      {:ok, io} -> {:ok, io}
+      {:error, reason} -> io_error(reason)
+    end
+  end
+
+  @doc """
   Decodes an EXCP version 1 payload into a point cloud.
 
   The decoder reads the global color/alpha/normal flags and the declared number
@@ -171,25 +313,40 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   end
 
   @doc """
-  Returns an enumerable over points in an EXCP payload.
+  Returns an enumerable over points in an EXCP payload or file.
+
+  ## Streaming behavior
+
+    * `source: :file` (or `:auto` when the argument looks like a path to a
+      regular file) reads the 16-byte header, then **one record at a time**
+      via `IO.binread/2`. Peak memory is O(header + one record), not the
+      whole cloud.
+    * `source: :binary` (or `:auto` for an in-memory EXCP payload) still
+      materializes through `decode/2`, then yields the list. A future Rust
+      backend may memory-map large binaries instead.
+
+  Prefer `source: :file` for multi‑MB / multi‑GB `.excp` paths.
 
   ## Arguments
 
-    * `data` (`binary()`) — a complete EXCP payload.
-    * `opts` (`keyword()`) — reserved and currently ignored.
+    * `source` (`Path.t() | binary()`) — filesystem path or complete EXCP
+      payload. Both are binaries, so `:source` controls resolution.
+    * `opts` (`keyword()`) — `:source` may be `:auto` (default), `:file`, or
+      `:binary`.
 
   ## Returns
 
-  An `Enumerable.t()` that yields decoded `%Point{}` values after the complete
-  cloud has been materialized. If `decode/2` fails, it yields exactly one
-  `{:error, %ExCodecs.Error{reason: :invalid_data,
-  codec: :spatial_binary}}` element.
+  An `Enumerable.t()` yielding `%Point{}` values. Failures are delayed until
+  enumeration as exactly one `{:error, %ExCodecs.Error{}}`:
+
+    * `reason: :io_error` — the file cannot be opened or read
+    * `reason: :invalid_data` — bad magic/version, truncated header, or a
+      truncated record mid-stream (`codec: :spatial_binary`)
 
   ## Raises / exceptions
 
-  Raises `FunctionClauseError` when `data` is not a binary because this public
-  function is guarded. `opts` is ignored. Binary validation failures are
-  delayed as the single error element rather than raised.
+  Raises `FunctionClauseError` when `source` is not a binary. Unsupported
+  `:source` values raise `CaseClauseError`.
 
   ## Examples
 
@@ -198,22 +355,185 @@ defmodule ExCodecs.Spatial.Codec.Binary do
       iex> [%Point{x: 0.0, y: 0.0, z: 0.0}] =
       ...>   ExCodecs.Spatial.Codec.Binary.stream_decode(bin) |> Enum.to_list()
   """
-  @spec stream_decode(binary(), keyword()) :: Enumerable.t()
-  def stream_decode(data, opts \\ []) when is_binary(data) do
-    case decode(data, opts) do
+  @spec stream_decode(Path.t() | binary(), keyword()) :: Enumerable.t()
+  def stream_decode(source, opts \\ [])
+
+  def stream_decode(data, opts) when is_binary(data) do
+    case resolve_source(data, opts) do
+      {:ok, :binary, bin} ->
+        stream_from_binary(bin, opts)
+
+      {:ok, :file, path} ->
+        Stream.resource(
+          fn -> open_excp_file(path) end,
+          &next_excp_item/1,
+          &close_excp_file/1
+        )
+    end
+  end
+
+  defp stream_from_binary(bin, opts) do
+    case decode(bin, opts) do
       {:ok, %PointCloud{points: points}} ->
         Stream.map(points, & &1)
 
       {:error, error} ->
-        Stream.resource(
-          fn -> {:error, error} end,
-          fn
-            {:error, e} -> {[{:error, e}], :done}
-            :done -> {:halt, :done}
-          end,
-          fn _ -> :ok end
-        )
+        error_stream(error)
     end
+  end
+
+  defp resolve_source(bin, opts) do
+    case Keyword.get(opts, :source, :auto) do
+      :binary ->
+        {:ok, :binary, bin}
+
+      :file ->
+        {:ok, :file, bin}
+
+      :auto ->
+        if path_like?(bin) and File.regular?(bin) do
+          {:ok, :file, bin}
+        else
+          {:ok, :binary, bin}
+        end
+    end
+  end
+
+  defp path_like?(bin) do
+    byte_size(bin) < 4096 and not String.starts_with?(bin, @magic) and
+      (String.contains?(bin, "/") or String.contains?(bin, "\\") or
+         String.ends_with?(bin, [".excp", ".bin"]))
+  end
+
+  defp open_excp_file(path) do
+    case File.open(path, [:read, :binary, :raw]) do
+      {:ok, io} -> parse_excp_header(io, IO.binread(io, 16))
+      {:error, reason} -> io_error(reason)
+    end
+  end
+
+  defp parse_excp_header(
+         io,
+         <<@magic::binary, version::little-unsigned-16, flags::little-unsigned-16,
+           count::little-unsigned-64>>
+       ) do
+    if version != @version do
+      File.close(io)
+
+      {:error,
+       Error.new(:invalid_data,
+         codec: :spatial_binary,
+         message: "Unsupported binary point format version #{version}"
+       )}
+    else
+      {:ok, io, flags, count, record_stride(flags), 0}
+    end
+  end
+
+  defp parse_excp_header(io, :eof) do
+    File.close(io)
+
+    {:error,
+     Error.new(:invalid_data,
+       codec: :spatial_binary,
+       message: "Invalid ExCodecs binary point cloud"
+     )}
+  end
+
+  defp parse_excp_header(io, data) when is_binary(data) do
+    File.close(io)
+
+    {:error,
+     Error.new(:invalid_data,
+       codec: :spatial_binary,
+       message: "Invalid ExCodecs binary point cloud"
+     )}
+  end
+
+  defp parse_excp_header(io, {:error, reason}) do
+    File.close(io)
+    io_error(reason)
+  end
+
+  defp next_excp_item({:ok, io, _flags, count, _stride, i}) when i >= count do
+    {:halt, {:done, io}}
+  end
+
+  defp next_excp_item({:ok, io, flags, count, stride, i}) do
+    case IO.binread(io, stride) do
+      data when is_binary(data) and byte_size(data) == stride ->
+        case decode_point(data, flags) do
+          {:ok, point, _} ->
+            {[point], {:ok, io, flags, count, stride, i + 1}}
+
+          {:error, error} ->
+            {[{:error, error}], {:done, io}}
+        end
+
+      :eof ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :spatial_binary,
+              message: "Truncated point record"
+            )}
+         ], {:done, io}}
+
+      data when is_binary(data) ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :spatial_binary,
+              message: "Truncated point record"
+            )}
+         ], {:done, io}}
+
+      {:error, reason} ->
+        {[{:error, io_error_struct(reason)}], {:done, io}}
+    end
+  end
+
+  defp next_excp_item({:error, error}), do: {[{:error, error}], :done}
+  defp next_excp_item({:done, _io}), do: {:halt, :done}
+  defp next_excp_item(:done), do: {:halt, :done}
+
+  defp close_excp_file({:ok, io, _, _, _, _}), do: File.close(io)
+  defp close_excp_file({:done, io}), do: File.close(io)
+  defp close_excp_file(_), do: :ok
+
+  defp record_stride(flags) do
+    color =
+      cond do
+        Bitwise.band(flags, @flag_alpha) != 0 -> 4
+        Bitwise.band(flags, @flag_color) != 0 -> 3
+        true -> 0
+      end
+
+    normal = if Bitwise.band(flags, @flag_normal) != 0, do: 12, else: 0
+    12 + color + normal
+  end
+
+  defp io_error(reason) do
+    {:error, io_error_struct(reason)}
+  end
+
+  defp io_error_struct(reason) do
+    Error.new(:io_error,
+      codec: :spatial_binary,
+      message: "Failed to read EXCP file: #{inspect(reason)}",
+      details: reason
+    )
+  end
+
+  defp error_stream(error) do
+    Stream.resource(
+      fn -> {:error, error} end,
+      fn
+        {:error, e} -> {[{:error, e}], :done}
+        :done -> {:halt, :done}
+      end,
+      fn _ -> :ok end
+    )
   end
 
   defp encode_point(%Point{} = p, flags) do
