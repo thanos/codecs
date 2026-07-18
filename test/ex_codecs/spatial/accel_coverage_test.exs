@@ -5,19 +5,14 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
   alias ExCodecs.Spatial.Codec.{Binary, Gsplat, PLY}
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
+  unless ExCodecs.Spatial.Accel.available?(),
+    do: @moduletag(skip: "spatial Accel NIF not loaded")
+
   defp tmp(ext) do
     Path.join(
       System.tmp_dir!(),
       "ex_codecs_accel_cov_#{System.unique_integer([:positive])}#{ext}"
     )
-  end
-
-  setup do
-    if Accel.available?() do
-      :ok
-    else
-      {:skip, "spatial Accel NIF not loaded"}
-    end
   end
 
   describe "Accel facade" do

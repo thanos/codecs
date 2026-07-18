@@ -8,13 +8,7 @@ defmodule ExCodecs.Spatial.AccelPropertyTest do
 
   @moduletag :accel
 
-  setup do
-    if Accel.available?() do
-      :ok
-    else
-      {:skip, "spatial Accel NIF not loaded"}
-    end
-  end
+  unless Accel.available?(), do: @moduletag(skip: "spatial Accel NIF not loaded")
 
   defp float32 do
     # Keep values in a range that survives f32 round-trip without NaN/Inf.

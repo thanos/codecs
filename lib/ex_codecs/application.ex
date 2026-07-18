@@ -102,15 +102,7 @@ defmodule ExCodecs.Application do
     nif_ok? = ExCodecs.Native.nif_loaded?()
 
     for {name, module, category, interface, metadata} <- codecs do
-      native? =
-        function_exported?(module, :__codec_info__, 0) and
-          match?(%{native?: true}, module.__codec_info__())
-
-      loadable? =
-        Code.ensure_loaded?(module) and function_exported?(module, :encode, 2) and
-          function_exported?(module, :decode, 2)
-
-      if loadable? and (not native? or nif_ok?) do
+      if codec_available?(module, nif_ok?) do
         ExCodecs.CodecRegistry.register(name, module, category, interface, metadata)
       else
         ExCodecs.CodecRegistry.register_unavailable(name, category, interface)
@@ -118,5 +110,19 @@ defmodule ExCodecs.Application do
     end
 
     :ok
+  end
+
+  @doc false
+  def codec_available?(module, nif_ok?) do
+    loadable? =
+      Code.ensure_loaded?(module) and function_exported?(module, :encode, 2) and
+        function_exported?(module, :decode, 2)
+
+    native? =
+      loadable? and
+        function_exported?(module, :__codec_info__, 0) and
+        match?(%{native?: true}, module.__codec_info__())
+
+    loadable? and (not native? or nif_ok?)
   end
 end

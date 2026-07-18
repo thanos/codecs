@@ -46,11 +46,15 @@ defmodule ExCodecs.Spatial do
 
   ## Streaming note
 
-  EXCP (`:spatial_binary`) and GSPL (`:gsplat`) **file** sources stream
-  record-by-record from disk. PLY and in-memory binaries still materialize,
-  then enumerate. Prefer `source: :file` for large EXCP/GSPL paths, or
-  `source: :binary` for payloads. See `docs/spatial_formats.md` for `:auto`
-  path heuristics and wire-format layouts.
+  EXCP (`:spatial_binary`), GSPL (`:gsplat`), and PLY **file** sources
+  (`source: :file` or `:auto` path detection) stream record-by-record from
+  disk: only the header and one record are held in memory at a time. Binary
+  PLY uses a fixed stride; ASCII PLY reads lines. In-memory binaries still
+  materialize through `decode/2` before yielding, unless the spatial NIF is
+  loaded, in which case EXCP/GSPL use chunked Rust unpack. Prefer
+  `source: :file` for large paths, or `source: :binary` for payloads. See
+  `docs/spatial_formats.md` for `:auto` path heuristics and wire-format
+  layouts.
   """
 
   alias ExCodecs.{CodecRegistry, Error}
@@ -275,8 +279,11 @@ defmodule ExCodecs.Spatial do
   @doc """
   Returns an enumerable over points or Gaussians decoded from a path or binary.
 
-  Despite the name, decoding currently materializes the complete payload and
-  decoded cloud before yielding elements.
+  File sources (`source: :file` or `:auto` path detection) stream
+  record-by-record: only the header and one record are held in memory at a
+  time. In-memory binaries materialize through `decode/2` before yielding,
+  unless the spatial NIF is loaded, in which case EXCP/GSPL use chunked Rust
+  unpack. See `ExCodecs.Spatial.Stream` for details.
 
   ## Arguments
 

@@ -226,36 +226,45 @@ VegaLite.new(width: 700, height: 350)
 
 ## Memory Usage
 
-```elixir
-memory_results = for codec <- codecs do
-  opts =
-    if codec == :blosc2,
-      do: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8],
-      else: []
-  {:ok, info} = ExCodecs.codec_info(codec)
+NIF encode/decode allocates **off-heap refc binaries**, not process-heap
+terms, so `Process.info(self(), :heap_size)` (which only sees the calling
+process's heap) is the wrong metric for codec working memory. The cell below
+measures process-heap growth across a full encode/decode of the 64 KiB
+float array, with a garbage collect on each side:
 
-  mem_before = Process.info(self(), :heap_size) |> elem(1)
+```elixir
+for codec <- codecs do
+  opts = if codec == :blosc2, do: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8], else: []
+  :erlang.garbage_collect()
+  before_heap = Process.info(self(), :heap_size) |> elem(1)
   {:ok, enc} = ExCodecs.encode(codec, float_array, opts)
   {:ok, _dec} = ExCodecs.decode(codec, enc)
-  mem_after = Process.info(self(), :heap_size) |> elem(1)
-
-  %{
-    codec: inspect(codec),
-    category: info.category,
-    configurable: info.configurable?,
-    streaming: info.streaming?,
-    heap_growth_words: mem_after - mem_before
-  }
+  :erlang.garbage_collect()
+  after_heap = Process.info(self(), :heap_size) |> elem(1)
+  IO.puts(String.pad_trailing("#{codec}", 10) <> "heap growth: #{after_heap - before_heap} words")
 end
-
-Kino.DataTable.new(memory_results)
 ```
 
 <!-- livebook:{"output":true} -->
 
-```text
-[%{configurable: false, category: :compression, codec: ":lz4", streaming: false, heap_growth_words: 0}, %{configurable: false, category: :compression, codec: ":snappy", streaming: false, heap_growth_words: 0}, %{configurable: true, category: :compression, codec: ":zstd", streaming: false, heap_growth_words: -8372}, %{configurable: true, category: :compression, codec: ":bzip2", streaming: false, heap_growth_words: 0}, %{configurable: true, category: :compression, codec: ":blosc2", streaming: false, heap_growth_words: 0}]
 ```
+lz4       heap growth: -988 words
+snappy    heap growth: 377 words
+zstd      heap growth: 0 words
+bzip2     heap growth: 0 words
+blosc2    heap growth: 0 words
+```
+
+The deltas are a few hundred words at most — Elixir-level term overhead
+(`{:ok, enc}` tuples, bindings) — while the **64 KiB of binary data flowing
+through each codec is off-heap refc memory** and does not appear here. That is
+why naive `heap_size` snapshots (and even `:erlang.memory(:binary)`, which is
+whole-VM and noisy) cannot yield a clean per-codec "memory usage" number.
+
+The real working-set bounds are set by options, not observed here: **decode**
+is capped by `:max_output_size` (default 256 MiB, the decompression-bomb
+guard), and **encode** working memory scales with the codec's block/window
+size (e.g. bzip2 `block_size` × ~100 KiB; see livebook 02).
 
 ## Codec Profiles
 

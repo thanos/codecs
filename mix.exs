@@ -92,7 +92,7 @@ defmodule ExCodecs.MixProject do
         "priv",
         "guides",
         "livebooks",
-        "docs",
+        "docs/spatial_formats.md",
         "checksum-*.exs",
         "mix.exs",
         "README.md",

@@ -267,7 +267,9 @@ defmodule ExCodecs do
   Lazily enumerates **spatial** primitives from a file path or binary.
 
   Delegates to `ExCodecs.Spatial.stream_decode/2`. **Not** used for registry
-  compression codecs. Today this materializes the payload then streams the list.
+  compression codecs. File sources stream record-by-record; in-memory binaries
+  materialize through `decode/2` (or use chunked Rust unpack when the spatial
+  NIF is loaded).
 
   ## Arguments
 

@@ -85,7 +85,7 @@ Let's see it in action.
 
 ```elixir
 original = String.duplicate(~S"""
-  Romeo and Juliet
+Romeo and Juliet
 Excerpt from Act 2, Scene 2
 
 JULIET
@@ -119,31 +119,7 @@ Henceforth I never will be Romeo.
 JULIET
 What man art thou that thus bescreen'd in night
 So stumblest on my counsel?
-  """, 100)
-```
-
-<!-- livebook:{"output":true} -->
-
-```
-warning: outdented heredoc line. The contents inside the heredoc should be indented at the same level as the closing """. The following is forbidden:
-
-    def text do
-      """
-    contents
-      """
-    end
-
-Instead make sure the contents are indented as much as the heredoc closing:
-
-    def text do
-      """
-      contents
-      """
-    end
-
-The current heredoc line is indented too little
-└─ work/ex_codecs/livebooks/01_introduction.livemd#cell:krsz4o6wgjua4fyq:3:31
-
+""", 100)
 ```
 
 <!-- livebook:{"output":true} -->
@@ -219,23 +195,24 @@ Bzip2 block 9: 1311 bytes
 ### Blosc2 for Numerical Data
 
 ```elixir
-# Blosc2 shines with typed binary data
-data = :binary.copy(<<0, 0, 0, 0, 1, 1, 1, 1>>, 512)
+# Float64 data: byte shuffle groups same-position bytes across elements
+# (sign/exponent bytes cluster together), enabling much better compression.
+floats = for i <- 1..2048, into: <<>>, do: <<i * 0.125::float-size(64)-little>>
 
-{:ok, plain} = ExCodecs.encode(:blosc2, data, typesize: 1, shuffle: :none)
-{:ok, shuffled} = ExCodecs.encode(:blosc2, data, typesize: 1, shuffle: :byte)
+{:ok, plain} = ExCodecs.encode(:blosc2, floats, typesize: 8, shuffle: :none)
+{:ok, shuffled} = ExCodecs.encode(:blosc2, floats, typesize: 8, shuffle: :byte)
 
-IO.puts("Original:        #{byte_size(data)} bytes")
-IO.puts("Blosc2 (no shuffle): #{byte_size(plain)} bytes")
+IO.puts("Original:             #{byte_size(floats)} bytes")
+IO.puts("Blosc2 (no shuffle):  #{byte_size(plain)} bytes")
 IO.puts("Blosc2 (byte shuffle): #{byte_size(shuffled)} bytes")
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
-Original:        4096 bytes
-Blosc2 (no shuffle): 73 bytes
-Blosc2 (byte shuffle): 73 bytes
+Original:             16384 bytes
+Blosc2 (no shuffle):  8251 bytes
+Blosc2 (byte shuffle): 675 bytes
 ```
 
 <!-- livebook:{"output":true} -->

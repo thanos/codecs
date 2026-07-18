@@ -577,25 +577,25 @@ ExCodecs.Error.error(:invalid_data, message: "Data must be a binary")
 ### NIF error mapping
 
 The Rust side returns errors as atoms: `{:error, :compression_failed}`,
-`{:error, :invalid_data}`, etc. The Elixir codec modules or the framework
-map these into structured errors via `ExCodecs.Error.from_nif/2`:
+`{:error, :invalid_data}`, `{:error, :output_limit_exceeded}`, etc. Elixir
+codec modules call `ExCodecs.NIF.wrap/2` (or `safe_call/2`) to turn those into
+`{:error, %ExCodecs.Error{}}`:
 
 ```elixir
-def from_nif({:error, reason}, codec) when is_atom(codec) do
-  {:error, %__MODULE__{
-    reason: nif_error_to_atom(reason),
-    message: "NIF error in codec #{codec}: #{inspect(reason)}",
-    codec: codec,
-    details: reason
-  }}
-end
+# Typical codec decode path
+case ExCodecs.NIF.max_output_size(opts) do
+  {:ok, max} ->
+    ExCodecs.NIF.wrap(:zstd, ExCodecs.Native.zstd_decompress(data, max))
 
-defp nif_error_to_atom(reason) when is_atom(reason), do: reason
-defp nif_error_to_atom(_), do: :compression_failed
+  {:error, _} = err ->
+    err
+end
 ```
 
-This creates a boundary: the Rust layer communicates errors as atoms, and the
-Elixir layer enriches those atoms into structured errors with context.
+`NIF.wrap/2` maps known atoms to structured errors with a default message and
+`codec:` field. Unknown atoms still become `%ExCodecs.Error{}` with the raw
+atom preserved. This keeps a clear boundary: Rust communicates status as
+atoms; Elixir enriches them for callers.
 
 ### Error flow
 

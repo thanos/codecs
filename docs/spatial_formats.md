@@ -94,8 +94,9 @@ after `count` records are ignored. Truncation yields `:invalid_data` /
 `:truncated_input` as implemented.
 
 **Streaming:** `stream_decode` with `source: :file` reads the 16-byte header,
-then each record via `IO.binread/2` (bounded memory). In-memory binaries still
-materialize through `decode/2`. `stream_encode_to_file/3` requires `:schema`
+then each record via `IO.binread/2` (bounded memory). In-memory binaries use
+chunked Rust unpack when the spatial NIF is loaded; otherwise they materialize
+through `decode/2`. `stream_encode_to_file/3` requires `:schema`
 (e.g. `schema: [:color]`) and patches the count after writing records.
 
 ## GSPL — `:gsplat` (version 1)
@@ -127,8 +128,9 @@ with zeros on encode).
 currently informational; `sh_rest` count in the header is authoritative.
 
 **Streaming:** `stream_decode` with `source: :file` reads the 18-byte header,
-then each record via `IO.binread/2` (bounded memory). In-memory binaries still
-materialize through `decode/2`. `stream_encode_to_file/3` requires `:schema`
+then each record via `IO.binread/2` (bounded memory). In-memory binaries use
+chunked Rust unpack when the spatial NIF is loaded; otherwise they materialize
+through `decode/2`. `stream_encode_to_file/3` requires `:schema`
 (e.g. `schema: []` or `schema: [sh_rest: 6]`) and patches the count after
 writing records.
 

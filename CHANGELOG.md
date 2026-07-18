@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Precompiled NIF checksums must be regenerated when publishing GitHub release
   artifacts for `0.2.3`.
 
+## [0.2.2] - 2026-07-17
+
+### Notes
+
+- Version number reserved and **superseded; not published** to Hex.pm. The
+  work intended for 0.2.2 was rolled into 0.2.3 (spatial streaming and Rust
+  acceleration) instead. Recorded per [Keep a Changelog](https://keepachangelog.com)
+  so the version-skip is not silent.
+
+## [0.2.1] - 2026-07-17
+
+### Fixed
+
+- README links and badge URLs corrected following the 0.2.0 spatial release.
+- `mix.exs` version bump to 0.2.1.
+
 ## [0.2.0] - 2026-07-16
 
 ### Added
@@ -128,7 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README badges updated with CI, Hex.pm, docs, license, Elixir version, and Coveralls
   coverage links.
 
-## [0.1.0] - 2025-06-09
+## [0.1.0] - 2026-06-13
 
 ### Added
 
@@ -139,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Blosc2 shuffle support (`:none`, `:byte`).
 - Rust NIF implementation via `rustler_precompiled`.
 - Precompiled binaries for macOS (ARM64, x86_64), Linux (glibc, musl, ARM64), Windows (x86_64).
-- `ExCodecs.Compression` convenience module (`compress/2`, `decompress/2`).
+- `ExCodecs.Compression` convenience module (`compress/3`, `decompress/3`).
 - Structured error handling with `%ExCodecs.Error{}`.
 - 154 tests (unit + property-based with StreamData).
 - 90%+ test coverage.

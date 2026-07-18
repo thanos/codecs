@@ -183,8 +183,9 @@ gaussian_cloud =
 
 `stream_decode/2` with `source: :file` reads one record/vertex at a time
 (bounded memory; mmap + Rust unpack when available). `stream_encode/2` still
-collects the enumerable, then encodes once — use `encode_to_file/3` with an
-explicit `:schema` for EXCP/GSPL incremental writes.
+collects the enumerable, then encodes once — use
+`ExCodecs.Spatial.Stream.encode_to_file/3` with an explicit `:schema` for
+EXCP/GSPL incremental writes.
 
 ```elixir
 {:ok, streamed_payload} =
@@ -196,6 +197,24 @@ streamed_points =
   |> Enum.to_list()
 
 length(streamed_points)
+```
+
+```elixir
+path = Path.join(System.tmp_dir!(), "ex_codecs_spatial_#{System.unique_integer([:positive])}.excp")
+
+:ok =
+  ExCodecs.Spatial.Stream.encode_to_file(points, path,
+    format: :spatial_binary,
+    schema: []
+  )
+
+file_points =
+  path
+  |> ExCodecs.Spatial.stream_decode(format: :spatial_binary, source: :file)
+  |> Enum.to_list()
+
+File.rm(path)
+length(file_points)
 ```
 
 ## Category-Safe Dispatch

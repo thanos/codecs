@@ -77,11 +77,22 @@ In ExCodecs that bag is a `GaussianCloud` of `Gaussian` structs.
 | Looks like geometry? | Sparse surface samples | Appearance-oriented volume of blobs |
 | ExCodecs types | `Point` / `PointCloud` | `Gaussian` / `GaussianCloud` |
 
-## Pure Elixir - what “no NIFs” means
+## Elixir-first, with optional Rust acceleration
 
-Yes: **today there is no Rust/NIF accelerator for spatial codecs**. Encode and
-decode run in Elixir. Compression codecs (`:zstd`, `:lz4`, …) still use Rust
-NIFs; spatial formats do not.
+Spatial encode/decode is **Elixir-first**: every format has a complete
+pure-Elixir implementation, so the API works on any BEAM without a native
+backend. Since **v0.2.3**, an optional Rust NIF accelerator is loaded when
+the precompiled native library is available:
+
+- **Chunked Rust pack/unpack** for EXCP and GSPL (byte-compatible with the
+  Elixir path; verified by property tests).
+- **mmap-backed file `stream_decode`** for EXCP/GSPL/PLY, and **binary PLY
+  body unpack**.
+- **Chunked `stream_encode_to_file`** for EXCP/GSPL.
+
+Compression codecs (`:zstd`, `:lz4`, …) always use Rust NIFs; spatial formats
+use the Elixir path unless acceleration is available. Pass `accel: false` to
+force pure Elixir for a given call.
 
 A common pattern is:
 
@@ -90,9 +101,18 @@ A common pattern is:
 {:ok, packed} = ExCodecs.encode(:zstd, ply)   # NIF compresses the bytes
 ```
 
-Spatial work stays on the BEAM; you optionally compress the resulting binary
-with the registry codecs. A future release may add an optional Rust backend
-for spatial encode/decode while keeping the same Elixir API.
+Spatial work stays on the BEAM (or the DirtyCpu NIF pool when accelerating);
+you optionally compress the resulting binary with the registry codecs.
+
+### Streaming (v0.2.3+)
+
+EXCP / GSPL / PLY **files** decode record-by-record from disk (bounded
+memory; mmap + Rust unpack when available). In-memory binaries use chunked
+Rust unpack when the NIF is loaded, otherwise materialize through `decode/2`.
+`stream_encode/2` still collects then encodes; use `encode_to_file/3` with an
+explicit `:schema` for EXCP/GSPL incremental writes. Prefer explicit
+`source: :file` or `source: :binary`. See `ExCodecs.Spatial.Stream` for
+details.
 
 ## Domain types - what each one is for
 
@@ -366,14 +386,9 @@ clouds. Magic bytes: `"GSPL"`.
 | “I heard splat / EXCP / GSPL” | splat = data kind; EXCP/GSPL = our binary containers |
 
 Wire layouts and schema rules are frozen in
-[Spatial wire formats](../docs/spatial_formats.md).
-
-Stream helpers (v0.2.3+): EXCP / GSPL / PLY **files** decode record-by-record
-from disk (bounded memory; mmap + Rust unpack when available). In-memory
-binaries use chunked Rust unpack when the NIF is loaded, otherwise materialize.
-`stream_encode/2` still collects then encodes; use `encode_to_file/3` with an
-explicit `:schema` for EXCP/GSPL incremental writes. Prefer explicit
-`source: :file` or `source: :binary`.
+[Spatial wire formats](../docs/spatial_formats.md). Streaming behavior is
+described in the [Elixir-first, with optional Rust acceleration](#elixir-first-with-optional-rust-acceleration)
+section above and in `ExCodecs.Spatial.Stream`.
 
 ## Why a separate `ExCodecs.Spatial` API?
 

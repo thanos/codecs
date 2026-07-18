@@ -108,21 +108,11 @@ Larger block sizes allow the BWT to find more distant patterns, improving compre
 
 ## Work Factor
 
-Bzip2's work factor parameter (0-250, default 30) controls the behavior when the BWT encounters "pathological" data that causes the sorting to take much longer than expected:
-
-- The default work factor of 30 means that if the sorting algorithm detects it is taking excessive time, it falls back to a simpler (but still correct) sorting method.
-- Higher values make Bzip2 try harder before falling back.
-- Lower values cause earlier fallback.
-
-In practice, the work factor rarely needs to be changed. Pathological data is uncommon, and the default of 30 handles nearly all real-world cases.
-
-```elixir
-# Default work factor
-{:ok, compressed} = ExCodecs.encode(:bzip2, data, block_size: 9, work_factor: 30)
-
-# Higher work factor for pathological data
-{:ok, compressed} = ExCodecs.encode(:bzip2, data, block_size: 9, work_factor: 100)
-```
+Bzip2's upstream `work_factor` parameter (0-250, default 30) governs fallback
+behavior when the BWT encounters pathological data. **ExCodecs does not expose
+it**: only `:block_size` is accepted on `encode/2`, and the NIF uses the
+upstream default. Unknown options such as `work_factor:` are silently ignored,
+so passing it has no effect.
 
 ## Bzip2 File Format
 
