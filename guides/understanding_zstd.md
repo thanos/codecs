@@ -167,9 +167,9 @@ On the BEAM, compression runs in a DirtyCpu NIF, so this memory is allocated out
 | Decompress Speed  | Very Fast  | Fast           | Very Fast| Slow        |
 | Dictionary Support| Yes        | No             | No       | No          |
 | Streaming          | Yes        | Yes             | No       | Yes         |
-| Configurable       | 22 levels  | 9 levels        | 16 levels| 9 blocks    |
+| Configurable       | 22 levels  | 9 levels        | No       | 9 blocks    |
 
-Zstd is strictly superior to GZIP/Deflate on both ratio and speed. It is the recommended default for new systems.
+Zstd is the recommended default for new systems: it usually offers a stronger speed/ratio tradeoff than GZIP/Deflate on modern workloads. Benchmark your own data rather than relying on published codec comparisons.
 
 ## Best Practices
 
@@ -179,7 +179,7 @@ Zstd is strictly superior to GZIP/Deflate on both ratio and speed. It is the rec
 
 3. **Use higher levels for write-once, read-many workloads.** The one-time compression cost is amortized over many fast decompressions.
 
-4. **Reserve levels 15-22 for batch processing.** These levels can be 5-20x slower than level 3 for modest ratio improvements (typically 2-5% additional compression).
+4. **Reserve levels 15-22 for batch processing.** Higher levels are often much slower than level 3 for modest extra ratio. Upstream C Zstd illustrations sometimes cite roughly 2-5% additional compression in that band; treat that as illustrative and benchmark your data (ExCodecs uses a pure-Rust backend).
 
 5. **Watch memory at high levels.** Large payloads require room for input and output buffers (block API).
 

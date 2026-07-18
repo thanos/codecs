@@ -1,6 +1,9 @@
 defmodule ExCodecs.Compression.Blosc2Test do
   use ExUnit.Case, async: true
 
+  @moduletag :doctest
+  doctest ExCodecs.Compression.Blosc2
+
   alias ExCodecs.Compression.Blosc2
 
   describe "encode/2" do
@@ -140,6 +143,11 @@ defmodule ExCodecs.Compression.Blosc2Test do
       {:ok, compressed} = Blosc2.encode(data, [])
       {:ok, decompressed} = Blosc2.decode(compressed, [])
       assert decompressed == data
+    end
+
+    test "returns error for invalid magic" do
+      assert {:error, %ExCodecs.Error{reason: :decompression_failed}} =
+               Blosc2.decode(<<0xFF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0>>, [])
     end
   end
 

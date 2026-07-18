@@ -59,6 +59,7 @@ defmodule ExCodecs.Compression.Lz4 do
         version: "lz4_flex-0.11"
       }
   """
+  @impl true
   def __codec_info__ do
     %ExCodecs.Codec{
       name: :lz4,

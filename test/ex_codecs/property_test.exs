@@ -3,7 +3,7 @@ defmodule ExCodecs.PropertyTest do
   use ExUnitProperties
 
   property "zstd round-trip preserves data" do
-    check all(data <- binary(min: 0, max: 10_000)) do
+    check all(data <- binary(min_length: 0, max_length: 10_000)) do
       {:ok, compressed} = ExCodecs.encode(:zstd, data)
       {:ok, decompressed} = ExCodecs.decode(:zstd, compressed)
       assert decompressed == data
@@ -11,7 +11,7 @@ defmodule ExCodecs.PropertyTest do
   end
 
   property "lz4 round-trip preserves data" do
-    check all(data <- binary(min: 1, max: 10_000)) do
+    check all(data <- binary(min_length: 1, max_length: 10_000)) do
       {:ok, compressed} = ExCodecs.encode(:lz4, data)
       {:ok, decompressed} = ExCodecs.decode(:lz4, compressed)
       assert decompressed == data
@@ -19,7 +19,7 @@ defmodule ExCodecs.PropertyTest do
   end
 
   property "snappy round-trip preserves data" do
-    check all(data <- binary(min: 1, max: 10_000)) do
+    check all(data <- binary(min_length: 1, max_length: 10_000)) do
       {:ok, compressed} = ExCodecs.encode(:snappy, data)
       {:ok, decompressed} = ExCodecs.decode(:snappy, compressed)
       assert decompressed == data
@@ -27,7 +27,7 @@ defmodule ExCodecs.PropertyTest do
   end
 
   property "bzip2 round-trip preserves data" do
-    check all(data <- binary(min: 1, max: 10_000)) do
+    check all(data <- binary(min_length: 1, max_length: 10_000)) do
       {:ok, compressed} = ExCodecs.encode(:bzip2, data)
       {:ok, decompressed} = ExCodecs.decode(:bzip2, compressed)
       assert decompressed == data
@@ -35,8 +35,7 @@ defmodule ExCodecs.PropertyTest do
   end
 
   property "blosc2 round-trip preserves data (random)" do
-    check all(size <- integer(8..10_000)) do
-      data = :crypto.strong_rand_bytes(size)
+    check all(data <- binary(min_length: 8, max_length: 10_000)) do
       {:ok, compressed} = ExCodecs.encode(:blosc2, data)
       {:ok, decompressed} = ExCodecs.decode(:blosc2, compressed)
       assert decompressed == data
@@ -45,7 +44,7 @@ defmodule ExCodecs.PropertyTest do
 
   property "compression reduces size for repeated data" do
     check all(
-            byte <- string(Enum.take(?a..?z, 1), min_length: 1, max_length: 1),
+            byte <- string(?a..?z, length: 1),
             count <- integer(100..10_000)
           ) do
       data = String.duplicate(byte, count)
@@ -117,17 +116,8 @@ defmodule ExCodecs.PropertyTest do
     end
   end
 
-  property "codec_info is consistent for all codecs" do
-    check all(
-            codec <-
-              one_of([
-                constant(:zstd),
-                constant(:lz4),
-                constant(:snappy),
-                constant(:bzip2),
-                constant(:blosc2)
-              ])
-          ) do
+  test "codec_info is consistent for all codecs" do
+    for codec <- [:zstd, :lz4, :snappy, :bzip2, :blosc2] do
       {:ok, info} = ExCodecs.codec_info(codec)
       assert info.name == codec
       assert info.category == :compression

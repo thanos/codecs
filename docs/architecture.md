@@ -1,6 +1,6 @@
 # ExCodecs Architecture
 
-A production-quality, extensible BEAM-native codec framework for Elixir.
+An extensible BEAM-native codec framework for Elixir.
 
 ## Table of Contents
 
@@ -97,7 +97,8 @@ The implementation is layered in four tiers:
    modules expose the category's struct↔format contract.
 
 4. **Native layer** -- Compression modules delegate to the Rustler NIF
-   (`ExCodecs.Native`). Spatial codecs are Elixir implementations in v0.2.0.
+   (`ExCodecs.Native`). Spatial codecs keep a pure-Elixir path and, since
+   v0.2.3, optional DirtyCpu / mmap acceleration via the same NIF crate.
 
 ---
 
@@ -420,7 +421,7 @@ the need for users to have a Rust toolchain installed:
 # mix.exs
 defp deps do
   [
-    {:rustler, "~> 0.36", runtime: false},
+    {:rustler, "~> 0.36", optional: true},
     {:rustler_precompiled, "~> 0.8"},
   ]
 end
@@ -576,25 +577,25 @@ ExCodecs.Error.error(:invalid_data, message: "Data must be a binary")
 ### NIF error mapping
 
 The Rust side returns errors as atoms: `{:error, :compression_failed}`,
-`{:error, :invalid_data}`, etc. The Elixir codec modules or the framework
-map these into structured errors via `ExCodecs.Error.from_nif/2`:
+`{:error, :invalid_data}`, `{:error, :output_limit_exceeded}`, etc. Elixir
+codec modules call `ExCodecs.NIF.wrap/2` (or `safe_call/2`) to turn those into
+`{:error, %ExCodecs.Error{}}`:
 
 ```elixir
-def from_nif({:error, reason}, codec) when is_atom(codec) do
-  {:error, %__MODULE__{
-    reason: nif_error_to_atom(reason),
-    message: "NIF error in codec #{codec}: #{inspect(reason)}",
-    codec: codec,
-    details: reason
-  }}
-end
+# Typical codec decode path
+case ExCodecs.NIF.max_output_size(opts) do
+  {:ok, max} ->
+    ExCodecs.NIF.wrap(:zstd, ExCodecs.Native.zstd_decompress(data, max))
 
-defp nif_error_to_atom(reason) when is_atom(reason), do: reason
-defp nif_error_to_atom(_), do: :compression_failed
+  {:error, _} = err ->
+    err
+end
 ```
 
-This creates a boundary: the Rust layer communicates errors as atoms, and the
-Elixir layer enriches those atoms into structured errors with context.
+`NIF.wrap/2` maps known atoms to structured errors with a default message and
+`codec:` field. Unknown atoms still become `%ExCodecs.Error{}` with the raw
+atom preserved. This keeps a clear boundary: Rust communicates status as
+atoms; Elixir enriches them for callers.
 
 ### Error flow
 
@@ -727,12 +728,14 @@ predictable and navigable.
 
 ## Codec Categories
 
-### Spatial (implemented in 0.2.0)
+### Spatial (since 0.2.0; Rust accel in 0.2.3)
 
-Spatial codecs map structured geometric types to interchange formats. They are
-pure Elixir and use the specialized `ExCodecs.Spatial` API rather than forcing
-structs through the binary-only `ExCodecs.Codec` callbacks. They are registered
-in the shared catalog with `category: :spatial` and `interface: :spatial`.
+Spatial codecs map structured geometric types to interchange formats. They use
+the specialized `ExCodecs.Spatial` API rather than forcing structs through the
+binary-only `ExCodecs.Codec` callbacks. They are registered in the shared
+catalog with `category: :spatial` and `interface: :spatial`. Hot paths may use
+DirtyCpu pack/unpack and mmap-backed file streams when the NIF is loaded
+(`accel: false` forces Elixir).
 
 `ExCodecs.available_codecs/0` lists all available entries,
 `ExCodecs.available_codecs(:spatial)` filters the shared catalog, and
@@ -745,7 +748,14 @@ category's preferred built-in order.
 | `:spatial_binary` | `ExCodecs.Spatial.Codec.Binary`     |
 | `:gsplat`         | `ExCodecs.Spatial.Codec.Gsplat`     |
 
-### Hashing
+### Future categories (not implemented)
+
+The categories below are **planned but not shipped**. They are sketched here to
+illustrate the extensibility model; the code examples are illustrative, not
+runnable, and the registry entries shown do not exist today. `:irreversible_codec`
+is not in the current `error_reason()` type.
+
+#### Hashing
 
 Hashing codecs encode data into fixed-length digests. Because hashing is
 one-way, `decode` will raise or return an error -- it is a symmetric API
@@ -769,7 +779,7 @@ Planned hashing codecs:
 | BLAKE3     | Variable      | Very fast, configurable output  |
 | xxHash     | 4/8 bytes     | Non-cryptographic, very fast    |
 
-### Checksums
+#### Checksums
 
 Checksum codecs produce small integrity tags. Unlike hashes, checksums may
 support a `verify` operation through encode/decode symmetry:
@@ -789,7 +799,7 @@ Planned checksum codecs:
 | Adler32| 4 bytes       | Faster than CRC32, less robust|
 | xxHash32| 4 bytes      | Fast non-cryptographic       |
 
-### Binary Encodings
+#### Binary Encodings
 
 Binary encoding codecs convert between binary formats and their text
 representations:
@@ -813,7 +823,7 @@ Planned encoding codecs:
 | Base16  | 100%     | Hex encoding                      |
 | Base58  | ~37%     | Bitcoin-style, no ambiguous chars|
 
-### Content Addressing
+#### Content Addressing
 
 Content-addressed codecs combine hashing and encoding for use in
 content-addressable storage systems:

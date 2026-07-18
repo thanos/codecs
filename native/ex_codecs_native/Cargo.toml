@@ -1,6 +1,6 @@
 [package]
 name = "ex_codecs_native"
-version = "0.2.0"
+version = "0.2.3"
 authors = ["ExCodecs Team"]
 edition = "2021"
 # structured-zstd declares MSRV 1.92 but calls the now-safe __cpuid without
@@ -23,6 +23,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 bzip2 = "0.6"
 # Official Blosc2 chunk format (BloscLZ, LZ4, LZ4HC, Zlib, Zstd + filters).
 blosc2-pure-rs = { version = "0.2.4", default-features = false, features = ["zlib-rs"] }
+memmap2 = "0.9"
 
 [features]
 default = ["nif_version_2_17"]

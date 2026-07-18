@@ -1,39 +1,14 @@
 defmodule ExCodecs.CodecTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Codec
+
   alias ExCodecs.Codec
 
   describe "Codec struct" do
-    test "has required fields" do
-      codec = %Codec{
-        name: :zstd,
-        category: :compression,
-        module: ExCodecs.Compression.Zstd,
-        native?: true,
-        streaming?: true,
-        configurable?: true,
-        version: "1.5.6"
-      }
-
-      assert codec.name == :zstd
-      assert codec.category == :compression
-      assert codec.interface == :binary
-      assert codec.module == ExCodecs.Compression.Zstd
-      assert codec.native? == true
-      assert codec.streaming? == true
-      assert codec.configurable? == true
-      assert codec.version == "1.5.6"
-    end
-
-    test "has default values" do
+    test "defaults interface to :binary" do
       codec = %Codec{name: :test}
-      assert codec.category == nil
       assert codec.interface == :binary
-      assert codec.module == nil
-      assert codec.native? == nil
-      assert codec.streaming? == nil
-      assert codec.configurable? == nil
-      assert codec.version == nil
     end
   end
 

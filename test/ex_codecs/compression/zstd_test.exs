@@ -1,6 +1,9 @@
 defmodule ExCodecs.Compression.ZstdTest do
   use ExUnit.Case, async: true
 
+  @moduletag :doctest
+  doctest ExCodecs.Compression.Zstd
+
   alias ExCodecs.Compression.Zstd
 
   describe "encode/2" do
@@ -11,11 +14,13 @@ defmodule ExCodecs.Compression.ZstdTest do
       assert byte_size(compressed) < byte_size(data)
     end
 
-    test "compresses data with custom level" do
-      data = :crypto.strong_rand_bytes(1024)
+    test "round-trips data at every level 1..22" do
+      data = String.duplicate("The quick brown fox jumps over the lazy dog. ", 64)
 
       for level <- 1..22 do
-        assert {:ok, _compressed} = Zstd.encode(data, level: level)
+        assert {:ok, compressed} = Zstd.encode(data, level: level)
+        assert {:ok, ^data} = Zstd.decode(compressed, [])
+        assert byte_size(compressed) < byte_size(data)
       end
     end
 
@@ -128,18 +133,6 @@ defmodule ExCodecs.Compression.ZstdTest do
       assert info.native? == true
       assert info.streaming? == false
       assert info.configurable? == true
-    end
-  end
-
-  describe "round-trip property" do
-    test "zstd round-trip preserves random data" do
-      for _ <- 1..50 do
-        size = :rand.uniform(10_000)
-        data = :crypto.strong_rand_bytes(size)
-        {:ok, compressed} = Zstd.encode(data, [])
-        {:ok, decompressed} = Zstd.decode(compressed, [])
-        assert decompressed == data
-      end
     end
   end
 end

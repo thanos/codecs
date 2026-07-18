@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.3] - 2026-07-18
+
+### Added
+
+- **Incremental spatial file I/O** — EXCP (`:spatial_binary`), GSPL (`:gsplat`),
+  and PLY `stream_decode` with `source: :file` (or `:auto` path detection) read
+  the header then **one record/vertex at a time** from disk (bounded memory).
+  Binary PLY uses a fixed stride; ASCII PLY reads lines.
+- `Binary.stream_encode_to_file/3` and `Gsplat.stream_encode_to_file/3` —
+  incremental file writes with an explicit `:schema` (placeholder header,
+  seek-back count). `Spatial.Stream.encode_to_file/3` uses these when
+  `:schema` is present with `format: :spatial_binary` or `:gsplat`.
+- **Spatial Rust acceleration** (DirtyCpu NIFs): chunked EXCP/GSPL pack &
+  unpack, mmap-backed file `stream_decode`, binary PLY body unpack, and
+  chunked `stream_encode_to_file`. Pass `accel: false` to force pure Elixir.
+  Property tests compare both backends byte-for-byte / structurally.
+
+### Changed
+
+- Mix `preferred_cli_env` moved into `cli/0` (`preferred_envs`) for Mix 1.20+.
+- In-memory spatial `stream_decode` uses chunked Rust unpack when the spatial
+  NIF is loaded; otherwise it still materializes through `decode/2`.
+
+### Notes
+
+- Wire layouts for EXCP / GSPL / PLY remain the **v0.2.0 freeze** in
+  `docs/spatial_formats.md` (Rust output is byte-compatible).
+- Precompiled NIF checksums must be regenerated when publishing GitHub release
+  artifacts for `0.2.3`.
+
+## [0.2.2] - 2026-07-17
+
+### Notes
+
+- Version number reserved and **superseded; not published** to Hex.pm. The
+  work intended for 0.2.2 was rolled into 0.2.3 (spatial streaming and Rust
+  acceleration) instead. Recorded per [Keep a Changelog](https://keepachangelog.com)
+  so the version-skip is not silent.
+
+## [0.2.1] - 2026-07-17
+
+### Fixed
+
+- README links and badge URLs corrected following the 0.2.0 spatial release.
+- `mix.exs` version bump to 0.2.1.
+
 ## [0.2.0] - 2026-07-16
 
 ### Added
@@ -62,8 +110,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Precompiled NIF checksums must be regenerated when publishing GitHub release
-  artifacts for `0.2.0`; until then local builds use `force_build` / source compile.
 - `native/ex_codecs_native/Cargo.lock` is committed for reproducible NIF builds.
 
 ## [0.1.1] - 2026-06-15
@@ -96,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README badges updated with CI, Hex.pm, docs, license, Elixir version, and Coveralls
   coverage links.
 
-## [0.1.0] - 2025-06-09
+## [0.1.0] - 2026-06-13
 
 ### Added
 
@@ -107,13 +153,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Blosc2 shuffle support (`:none`, `:byte`).
 - Rust NIF implementation via `rustler_precompiled`.
 - Precompiled binaries for macOS (ARM64, x86_64), Linux (glibc, musl, ARM64), Windows (x86_64).
-- `ExCodecs.Compression` convenience module (`compress/2`, `decompress/2`).
+- `ExCodecs.Compression` convenience module (`compress/3`, `decompress/3`).
 - Structured error handling with `%ExCodecs.Error{}`.
-- 154 tests (unit + property-based with StreamData).
-- 90%+ test coverage.
 - CI pipeline (test matrix, lint, coverage, docs).
 - Release workflow for Hex.pm publishing with precompiled NIFs.
 - Five livebooks: introduction, fundamentals, comparison, storage systems, Zarr workloads.
 - Eleven guides covering all public modules and API details.
 - Benchmarks via benchee.
 - Credo and Dialyzer integration.
+
+[Unreleased]: https://github.com/thanos/codecs/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/thanos/codecs/releases/tag/v0.2.3
+[0.2.2]: https://github.com/thanos/codecs/releases/tag/v0.2.2
+[0.2.1]: https://github.com/thanos/codecs/releases/tag/v0.2.1
+[0.2.0]: https://github.com/thanos/codecs/releases/tag/v0.2.0
+[0.1.1]: https://github.com/thanos/codecs/releases/tag/v0.1.1
+[0.1.0]: https://github.com/thanos/codecs/releases/tag/v0.1.0

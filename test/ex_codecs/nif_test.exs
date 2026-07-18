@@ -34,7 +34,8 @@ defmodule ExCodecs.NIFTest do
     end
 
     test "wraps unknown error atoms" do
-      assert {:error, %ExCodecs.Error{reason: :some_unknown_error, codec: :snappy}} =
+      assert {:error,
+              %ExCodecs.Error{reason: :invalid_data, codec: :snappy, details: :some_unknown_error}} =
                NIF.wrap(:snappy, {:error, :some_unknown_error})
     end
   end

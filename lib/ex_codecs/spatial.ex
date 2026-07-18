@@ -46,10 +46,15 @@ defmodule ExCodecs.Spatial do
 
   ## Streaming note
 
-  `stream_decode` / `stream_encode` currently materialize full payloads, then
-  enumerate. Prefer `source: :file` when the argument is a path, or
-  `source: :binary` for payloads. See `docs/spatial_formats.md` for `:auto`
-  path heuristics and wire-format layouts.
+  EXCP (`:spatial_binary`), GSPL (`:gsplat`), and PLY **file** sources
+  (`source: :file` or `:auto` path detection) stream record-by-record from
+  disk: only the header and one record are held in memory at a time. Binary
+  PLY uses a fixed stride; ASCII PLY reads lines. In-memory binaries still
+  materialize through `decode/2` before yielding, unless the spatial NIF is
+  loaded, in which case EXCP/GSPL use chunked Rust unpack. Prefer
+  `source: :file` for large paths, or `source: :binary` for payloads. See
+  `docs/spatial_formats.md` for `:auto` path heuristics and wire-format
+  layouts.
   """
 
   alias ExCodecs.{CodecRegistry, Error}
@@ -90,7 +95,7 @@ defmodule ExCodecs.Spatial do
 
   ## Arguments
 
-    * `format` (`atom()`) — the candidate format name.
+    * `format` (`atom()`)  -  the candidate format name.
 
   ## Returns
 
@@ -122,10 +127,10 @@ defmodule ExCodecs.Spatial do
 
   ## Arguments
 
-    * `data` (`PointCloud.t() | GaussianCloud.t()`) — a point cloud for
+    * `data` (`PointCloud.t() | GaussianCloud.t()`)  -  a point cloud for
       `:ply` or `:spatial_binary`, or a Gaussian cloud for `:ply` or `:gsplat`.
-    * `opts` (`keyword()`) — options passed to the selected codec:
-      * `:format` — spatial container: `:ply` (default), `:spatial_binary`, or
+    * `opts` (`keyword()`)  -  options passed to the selected codec:
+      * `:format`  -  spatial container: `:ply` (default), `:spatial_binary`, or
         `:gsplat`. This key is removed before codec dispatch.
       * for PLY, `:ply_format` selects `:ascii`, `:binary`, `:binary_le`, or
         `:binary_be`; `:comments` overrides metadata comments.
@@ -209,10 +214,10 @@ defmodule ExCodecs.Spatial do
 
   ## Arguments
 
-    * `data` (`binary()`) — a complete encoded payload.
-    * `opts` (`keyword()`) — decode options:
-      * `:format` — `:ply` (default), `:spatial_binary`, or `:gsplat`.
-      * `:as` — PLY interpretation: `:auto` (default), `:point_cloud`, or
+    * `data` (`binary()`)  -  a complete encoded payload.
+    * `opts` (`keyword()`)  -  decode options:
+      * `:format`  -  `:ply` (default), `:spatial_binary`, or `:gsplat`.
+      * `:as`  -  PLY interpretation: `:auto` (default), `:point_cloud`, or
         `:gaussian_cloud`. In `:auto`, Gaussian property names select a
         `%GaussianCloud{}`; other vertex schemas select a `%PointCloud{}`.
 
@@ -274,15 +279,18 @@ defmodule ExCodecs.Spatial do
   @doc """
   Returns an enumerable over points or Gaussians decoded from a path or binary.
 
-  Despite the name, decoding currently materializes the complete payload and
-  decoded cloud before yielding elements.
+  File sources (`source: :file` or `:auto` path detection) stream
+  record-by-record: only the header and one record are held in memory at a
+  time. In-memory binaries materialize through `decode/2` before yielding,
+  unless the spatial NIF is loaded, in which case EXCP/GSPL use chunked Rust
+  unpack. See `ExCodecs.Spatial.Stream` for details.
 
   ## Arguments
 
-    * `source` (`Path.t() | binary()`) — a filesystem path or encoded payload.
+    * `source` (`Path.t() | binary()`)  -  a filesystem path or encoded payload.
       Since paths are binaries in Elixir, use `source: :file` to force path
       interpretation or `source: :binary` to force payload interpretation.
-    * `opts` (`keyword()`) — requires `:format` (`:ply`,
+    * `opts` (`keyword()`)  -  requires `:format` (`:ply`,
       `:spatial_binary`, or `:gsplat`). `:source` may be `:auto` (default),
       `:file`, or `:binary`; remaining options go to the selected decoder.
 
@@ -327,8 +335,8 @@ defmodule ExCodecs.Spatial do
 
   ## Arguments
 
-    * `enumerable` (`Enumerable.t()`) — `%Point{}` or `%Gaussian{}` elements.
-    * `opts` (`keyword()`) — requires `:format` (`:ply`,
+    * `enumerable` (`Enumerable.t()`)  -  `%Point{}` or `%Gaussian{}` elements.
+    * `opts` (`keyword()`)  -  requires `:format` (`:ply`,
       `:spatial_binary`, or `:gsplat`); remaining options are the same as
       `encode/2`.
 

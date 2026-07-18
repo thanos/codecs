@@ -16,7 +16,7 @@
 # )
 
 Mix.install( [
-    {:ex_codecs, "~> 0.2.0"}, 
+    {:ex_codecs, "~> 0.2.3"}, 
     {:jason, "~> 1.4"}, 
     {:kino, "~> 0.14"}, 
     {:kino_vega_lite, "~> 0.1.13"}
@@ -380,13 +380,15 @@ On the BEAM these buffers live in DirtyCpu NIF memory, not the Erlang heap.
 
 ### Bzip2 block size — speed, ratio, and memory scale together
 
-`:block_size` is 1..9. Each step is about **100 KiB** of compressor working
-memory (and roughly half that on decompress). On short inputs the size win
-from larger blocks is small; the interesting signal is encode/decode time
-growing with block size.
+`:block_size` is 1..9. Each step raises the block buffer by about **100 KiB**
+(and roughly half that on decompress). To see block size actually bind, the
+input below is ~1 MiB, so small block sizes split it into many blocks while
+large ones use one or two. With that, larger blocks improve the ratio and
+raise **encode** time (the BWT is superlinear per block); **decode** time is
+roughly flat. Numbers are the mean of 5 runs after a warmup pass.
 
 ```elixir
-data = String.duplicate("Hello, World! This is a compression test. ", 2000)
+data = String.duplicate("Hello, World! This is a compression test. ", 25_000)
 
 IO.puts(
   String.pad_trailing("Block", 8) <>
@@ -394,16 +396,30 @@ IO.puts(
     String.pad_trailing("Ratio%", 10) <>
     String.pad_trailing("Encode µs", 12) <>
     String.pad_trailing("Decode µs", 12) <>
-    "~Mem compress"
+    "Block buf"
 )
 
 IO.puts(String.duplicate("-", 64))
 
 for bs <- 1..9 do
-  {enc_us, {:ok, enc}} = :timer.tc(fn -> ExCodecs.encode(:bzip2, data, block_size: bs) end)
-  {dec_us, {:ok, ^data}} = :timer.tc(fn -> ExCodecs.decode(:bzip2, enc) end)
+  {:ok, enc} = ExCodecs.encode(:bzip2, data, block_size: bs)
+  ExCodecs.decode(:bzip2, enc)
+
+  enc_times =
+    for _ <- 1..5 do
+      {us, {:ok, _}} = :timer.tc(fn -> ExCodecs.encode(:bzip2, data, block_size: bs) end)
+      us
+    end
+
+  dec_times =
+    for _ <- 1..5 do
+      {us, {:ok, _}} = :timer.tc(fn -> ExCodecs.decode(:bzip2, enc) end)
+      us
+    end
+
+  enc_us = div(Enum.sum(enc_times), 5)
+  dec_us = div(Enum.sum(dec_times), 5)
   ratio = Float.round(100 * byte_size(enc) / byte_size(data), 1)
-  # Rule of thumb from the Bzip2 guide: ~100 KiB × block_size while compressing.
   mem = "#{bs * 100} KiB"
 
   IO.puts(
@@ -419,29 +435,33 @@ end
 IO.puts("""
 
 Unlike Zstd, Bzip2 decode is also relatively slow — pick it for cold/archival
-paths, not hot reads. Prefer a smaller block_size when concurrent compressions
-would otherwise stack many megabytes of NIF memory.
+paths, not hot reads. The "Block buf" column is just the block buffer
+(≈ 100 KiB × block_size); total compressor memory adds fixed overhead on top.
+Prefer a smaller block_size when concurrent compressions would otherwise stack
+many megabytes of NIF memory.
 """)
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
-Block   Size      Ratio%    Encode µs   Decode µs   ~Mem compress
+Block   Size      Ratio%    Encode µs   Decode µs   Block buf
 ----------------------------------------------------------------
-1       158       0.2       20610       1363        100 KiB
-2       158       0.2       15793       905         200 KiB
-3       158       0.2       9738        599         300 KiB
-4       158       0.2       9477        630         400 KiB
-5       158       0.2       8405        539         500 KiB
-6       158       0.2       8074        532         600 KiB
-7       158       0.2       8427        504         700 KiB
-8       158       0.2       7967        536         800 KiB
-9       158       0.2       8143        499         900 KiB
+1       1622      0.2       119100      5266        100 KiB
+2       926       0.1       126151      5235        200 KiB
+3       604       0.1       129753      5379        300 KiB
+4       492       0.0       132152      5421        400 KiB
+5       466       0.0       133521      5194        500 KiB
+6       329       0.0       136100      5119        600 KiB
+7       328       0.0       137070      5676        700 KiB
+8       336       0.0       136531      5337        800 KiB
+9       327       0.0       140045      5125        900 KiB
 
 Unlike Zstd, Bzip2 decode is also relatively slow — pick it for cold/archival
-paths, not hot reads. Prefer a smaller block_size when concurrent compressions
-would otherwise stack many megabytes of NIF memory.
+paths, not hot reads. The "Block buf" column is just the block buffer
+(≈ 100 KiB × block_size); total compressor memory adds fixed overhead on top.
+Prefer a smaller block_size when concurrent compressions would otherwise stack
+many megabytes of NIF memory.
 
 ```
 

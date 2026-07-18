@@ -1,1 +1,1 @@
-ExUnit.start(exclude: [:bench])
+ExUnit.start(exclude: [:bench, :lint])

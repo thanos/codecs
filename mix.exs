@@ -1,7 +1,7 @@
 defmodule ExCodecs.MixProject do
   use Mix.Project
 
-  @version "0.2.2"
+  @version "0.2.3"
   @source_url "https://github.com/thanos/codecs"
 
   def project do
@@ -20,8 +20,13 @@ defmodule ExCodecs.MixProject do
         tool: ExCoveralls,
         ignore_modules: [ExCodecs.Native],
         threshold: 95
-      ],
-      preferred_cli_env: [
+      ]
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
         coveralls: :test,
         "coveralls.detail": :test,
         "coveralls.github": :test,
@@ -87,7 +92,7 @@ defmodule ExCodecs.MixProject do
         "priv",
         "guides",
         "livebooks",
-        "docs",
+        "docs/spatial_formats.md",
         "checksum-*.exs",
         "mix.exs",
         "README.md",
@@ -101,10 +106,27 @@ defmodule ExCodecs.MixProject do
       main: "ExCodecs",
       source_url: @source_url,
       source_ref: "v#{@version}",
-      extras:
-        Path.wildcard("guides/**/*.md") ++
-          Path.wildcard("livebooks/**/*.livemd") ++
-          ["docs/spatial_formats.md"],
+      extras: [
+        "guides/benchmarking_methodology.md",
+        "guides/choosing_compression_codec.md",
+        "guides/codec_fundamentals.md",
+        "guides/compression_fundamentals.md",
+        "guides/native_architecture.md",
+        "guides/runtime_codec_discovery.md",
+        "guides/understanding_blosc2.md",
+        "guides/understanding_bzip2.md",
+        "guides/understanding_lz4.md",
+        "guides/understanding_snappy.md",
+        "guides/understanding_spatial_codecs.md",
+        "guides/understanding_zstd.md",
+        "livebooks/01_introduction.livemd",
+        "livebooks/02_compression_fundamentals.livemd",
+        "livebooks/03_codec_comparison.livemd",
+        "livebooks/04_building_storage_systems.livemd",
+        "livebooks/05_zarr_style_workloads.livemd",
+        "livebooks/06_spatial_codecs.livemd",
+        "docs/spatial_formats.md"
+      ],
       groups_for_extras: [
         Guides: ~r"guides/",
         Livebooks: ~r"livebooks/",

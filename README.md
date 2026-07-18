@@ -42,7 +42,7 @@ Add `ex_codecs` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ex_codecs, "~> 0.2.0"}
+    {:ex_codecs, "~> 0.2.3"}
   ]
 end
 ```
@@ -180,7 +180,10 @@ and the frozen [Spatial wire formats](https://hexdocs.pm/ex_codecs/spatial_forma
   bytes/ratios are not guaranteed identical to C libzstd.
 - **Decompression** defaults to a **256 MiB** `max_output_size`. Raise it only
   for trusted inputs; do not decompress untrusted payloads without a tight limit.
-- Spatial `stream_*` helpers **materialize** full payloads today.
+- Spatial **file** `stream_decode` is incremental (bounded memory). In-memory
+  binaries use chunked Rust unpack when available, otherwise materialize.
+  `stream_encode/2` still collects the enumerable, then encodes once; use
+  `encode_to_file/3` with an explicit `:schema` for EXCP/GSPL file streaming.
 
 ## Architecture
 
@@ -196,8 +199,9 @@ ExCodecs is layered as follows:
 3. **Shared codec catalog** (`ExCodecs.CodecRegistry`) — ETS map of codec atoms
    to modules, categories, interface shapes, and metadata, populated at startup.
 
-4. **Native NIFs** (`ExCodecs.Native`) — pure-Rust compression via
-   `rustler_precompiled` (or local compile).
+4. **Native NIFs** (`ExCodecs.Native`) — pure-Rust compression plus optional
+   spatial DirtyCpu / mmap acceleration via `rustler_precompiled` (or local
+   compile).
 
 5. **Category discovery** — `available_codecs/0` lists the whole catalog;
    `available_codecs/1` filters it, and

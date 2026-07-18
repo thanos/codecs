@@ -2,8 +2,10 @@ defmodule ExCodecs.Spatial.Transform do
   @moduledoc """
   Rigid/similarity transform metadata, not applied to points by this library.
 
-  Codecs may embed transforms in headers when a format supports it. Application
-  of transforms is left to higher-level code.
+  **Reserved for future use.** No shipped codec reads or writes `Transform`
+  fields today. The module is provided so that formats which embed pose
+  metadata (e.g. EXCP v2) can use a shared type when that support lands.
+  Application of transforms is left to higher-level code.
 
   ## Fields
 

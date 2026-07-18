@@ -22,6 +22,9 @@ defmodule ExCodecs.Native do
     otp_app: :ex_codecs,
     crate: :ex_codecs_native,
     version: version,
+    # This URL must match the GitHub repo that hosts release artifacts.
+    # If the repo is renamed, published checksums become invalid until
+    # a new release is cut. Keep in sync with @source_url in mix.exs.
     base_url: "https://github.com/thanos/codecs/releases/download/v#{version}",
     mode: :release,
     nif_versions: ["2.17"],
@@ -65,6 +68,45 @@ defmodule ExCodecs.Native do
   @doc false
   def codec_versions, do: :erlang.nif_error(:nif_not_loaded)
 
+  # --- Spatial acceleration (DirtyCpu) ---------------------------------------
+
+  @doc false
+  def excp_unpack(_data, _flags, _offset, _max_count), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def excp_pack(_records, _flags), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def gspl_unpack(_data, _sh_rest, _offset, _max_count), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def gspl_pack(_records, _sh_rest), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def ply_binary_unpack(_data, _types, _little_endian, _offset, _max_count),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def spatial_mmap_open(_path), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def spatial_mmap_len(_resource), do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def excp_unpack_mmap(_resource, _flags, _offset, _max_count),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def gspl_unpack_mmap(_resource, _sh_rest, _offset, _max_count),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def ply_binary_unpack_mmap(_resource, _types, _little_endian, _offset, _max_count),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @doc false
+  def spatial_append_file(_path, _data), do: :erlang.nif_error(:nif_not_loaded)
+
   @doc """
   Returns `true` when the native NIF library is loaded.
 
@@ -97,6 +139,8 @@ defmodule ExCodecs.Native do
   def nif_loaded? do
     is_map(codec_versions())
   rescue
+    # ErlangError: NIF not loaded (stub raises nif_error).
+    # ArgumentError: rare Rustler resource-arity mismatch on some OTPs.
     ErlangError -> false
     ArgumentError -> false
   end

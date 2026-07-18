@@ -51,6 +51,10 @@ defmodule ExCodecs.Spatial.Point do
   User attributes keyed by strings, with numeric or binary values.
   For example, `%{"intensity" => 0.82, "classification" => 2}`.
   Atom keys passed to `new/4` are normalized to strings.
+
+  PLY encode (the only codec that stores attributes) accepts **numeric**
+  attribute values only; binary values will cause an encode error. Use
+  cloud-level `Metadata` for non-numeric payloads.
   """
   @type attributes :: %{optional(String.t()) => number() | binary()}
 
@@ -95,6 +99,13 @@ defmodule ExCodecs.Spatial.Point do
 
   * `FunctionClauseError` if a coordinate is not numeric, or if `opts` is not
     a keyword list accepted by `Keyword.get/3`.
+
+  ## Notes
+
+  Literal `%Point{}` construction with atom-keyed attributes bypasses
+  stringification; codecs that read attributes (e.g. PLY) treat atom keys as
+  missing and default them to `0.0`. Always use `Point.new/4` or pre-stringify
+  keys when the point will be encoded.
 
   ## Examples
 

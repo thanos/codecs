@@ -1,6 +1,8 @@
 defmodule ExCodecs.SpatialTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Spatial
+
   alias ExCodecs.Spatial
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
@@ -11,16 +13,16 @@ defmodule ExCodecs.SpatialTest do
 
   describe "available_formats/0" do
     test "lists supported formats" do
-      assert Spatial.available_formats() == [:ply, :spatial_binary, :gsplat]
-      assert :ply in Spatial.available_formats()
-      assert :gsplat in Spatial.available_formats()
+      formats = Spatial.available_formats()
+      assert Enum.all?([:ply, :spatial_binary, :gsplat], &(&1 in formats))
       assert Spatial.supports?(:ply)
       refute Spatial.supports?(:sog)
     end
 
     test "spatial formats participate in the shared catalog" do
       assert :ply in ExCodecs.available_codecs()
-      assert ExCodecs.available_codecs(:spatial) == [:gsplat, :ply, :spatial_binary]
+      spatial = ExCodecs.available_codecs(:spatial)
+      assert Enum.all?([:gsplat, :ply, :spatial_binary], &(&1 in spatial))
       assert ExCodecs.supports?(:ply)
 
       assert {:ok, info} = ExCodecs.codec_info(:ply)

@@ -7,6 +7,16 @@ defmodule ExCodecs.CodecRegistry do
   registry API, while spatial entries are dispatched through
   `ExCodecs.Spatial`.
 
+  ## Crash behavior
+
+  The ETS table is owned by this Agent process. If the Agent **crashes**, the
+  table is destroyed and only the `:register` callback (built-ins) is replayed
+  on restart. **Runtime third-party registrations made via `register/3` or
+  `register/5` are lost** and must be re-registered by the caller. If the
+  Agent restarts while the table still exists (e.g. via a supervised
+  `:restart_for_type`), existing entries are preserved and only overwritten
+  by the callback.
+
   ## Typical use
 
       iex> ExCodecs.available_codecs()
@@ -17,6 +27,11 @@ defmodule ExCodecs.CodecRegistry do
   """
 
   use Agent
+
+  # The Agent process exists solely to own the named public ETS table
+  # (`@table_name`). Its state is the table name itself and is never read
+  # after init; a GenServer would be equivalent. A future revision may move
+  # the catalog to `:persistent_term` for the read-mostly path.
 
   @table_name :ex_codecs_registry
   @registry_name __MODULE__
@@ -73,7 +88,10 @@ defmodule ExCodecs.CodecRegistry do
             :ets.new(@table_name, [:set, :public, :named_table])
 
           _tid ->
-            :ets.delete_all_objects(@table_name)
+            # Keep existing entries across registry restarts so third-party
+            # registrations survive and readers never see an empty catalog.
+            # Built-ins are overwritten by `register_fun` below.
+            :ok
         end
 
         register_fun.()
@@ -162,7 +180,68 @@ defmodule ExCodecs.CodecRegistry do
     register(name, module, category, interface, [])
   end
 
-  @doc false
+  @doc """
+  Registers a module with an explicit interface and optional metadata overrides.
+
+  Builds the stored `%ExCodecs.Codec{}` from `name`, `module`, `category`, and
+  `interface`, then merges capability fields from the module's optional
+  `c:ExCodecs.Codec.__codec_info__/0` (when exported). Each key in `metadata`
+  overrides the corresponding field from `__codec_info__/0`.
+
+  ## Arguments
+
+    * `name` (`atom()`) — catalog key (always stored; not taken from metadata)
+    * `module` (`module()`) — module exporting `encode/2` and `decode/2`
+    * `category` (`atom()`) — grouping atom such as `:compression` or `:spatial`
+    * `interface` (`:binary | :spatial`) — public API shape for the entry
+    * `metadata` (`keyword()`) — optional overrides for capability fields:
+
+      * `:native?` (`boolean()`) — NIF-backed implementation
+      * `:streaming?` (`boolean()`) — incremental API available
+      * `:configurable?` (`boolean()`) — meaningful codec-specific options
+      * `:version` (`String.t() | nil`) — backend version string
+
+      Unknown keys are ignored. Omitted keys keep the value from
+      `__codec_info__/0`, or `nil` when that function is not exported.
+
+  ## Returns
+
+    * `:ok` — metadata was stored, replacing any entry with the same `name`
+    * `{:error, {:invalid_codec_module, module}}` — the module cannot be loaded
+      or does not export both codec callbacks
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry ETS table does not exist. A codec's
+  optional `__codec_info__/0` is called during registration and any exception
+  it raises propagates.
+
+  ## Persistence
+
+  This entry is stored in an ETS table owned by the registry Agent. If the
+  Agent crashes, runtime registrations are **not replayed** — only the
+  `:register` callback supplied at `start_link/1` runs on restart. Re-register
+  third-party codecs from your own supervision tree if you need crash
+  survivability.
+
+  ## Examples
+
+      iex> :ok = ExCodecs.CodecRegistry.register(
+      ...>   :documented_spatial_binary,
+      ...>   ExCodecs.Spatial.Codec.Binary,
+      ...>   :spatial,
+      ...>   :spatial,
+      ...>   native?: false,
+      ...>   streaming?: false,
+      ...>   configurable?: false,
+      ...>   version: "EXCP 1"
+      ...> )
+      iex> {:ok, info} = ExCodecs.CodecRegistry.codec_info(:documented_spatial_binary)
+      iex> {info.interface, info.version, info.native?}
+      {:spatial, "EXCP 1", false}
+      iex> ExCodecs.CodecRegistry.unregister(:documented_spatial_binary)
+      :ok
+  """
   @spec register(atom(), module(), atom(), :binary | :spatial, keyword()) ::
           :ok | {:error, term()}
   def register(name, module, category, interface, metadata)
@@ -209,7 +288,41 @@ defmodule ExCodecs.CodecRegistry do
     register_unavailable(name, category, :binary)
   end
 
-  @doc false
+  @doc """
+  Registers a known codec as unavailable with an explicit interface.
+
+  Stores `%ExCodecs.Codec{module: nil}` with capability fields set to `false`
+  and `version: nil`. Use when a codec name is part of the catalog but its
+  implementation module cannot be loaded (for example a NIF-backed codec when
+  the native library failed to load).
+
+  ## Arguments
+
+    * `name` (`atom()`) — known codec's registry key
+    * `category` (`atom()`) — grouping key, such as `:compression` or `:spatial`
+    * `interface` (`:binary | :spatial`) — public API shape for the entry
+
+  ## Returns
+
+  Always `:ok` after storing the unavailable entry.
+
+  ## Raises
+
+  May raise `ArgumentError` if the registry ETS table does not exist.
+
+  ## Example
+
+      iex> :ok = ExCodecs.CodecRegistry.register_unavailable(
+      ...>   :example_spatial_optional,
+      ...>   :spatial,
+      ...>   :spatial
+      ...> )
+      iex> {:ok, info} = ExCodecs.CodecRegistry.codec_info(:example_spatial_optional)
+      iex> {info.module, info.interface, ExCodecs.CodecRegistry.supports?(:example_spatial_optional)}
+      {nil, :spatial, false}
+      iex> ExCodecs.CodecRegistry.unregister(:example_spatial_optional)
+      :ok
+  """
   @spec register_unavailable(atom(), atom(), :binary | :spatial) :: :ok
   def register_unavailable(name, category, interface)
       when interface in [:binary, :spatial] do
@@ -483,7 +596,7 @@ defmodule ExCodecs.CodecRegistry do
 
   defp build_codec_info(name, module, category, interface, metadata) do
     info =
-      if function_exported?(module, :__codec_info__, 0) do
+      if Code.ensure_loaded?(module) and function_exported?(module, :__codec_info__, 0) do
         module.__codec_info__()
       else
         %ExCodecs.Codec{}

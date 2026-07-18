@@ -65,7 +65,9 @@ defmodule ExCodecs.Spatial.Bounds do
           {number(), number(), number()},
           {number(), number(), number()}
         ) :: t()
-  def new({min_x, min_y, min_z}, {max_x, max_y, max_z}) do
+  def new({min_x, min_y, min_z}, {max_x, max_y, max_z})
+      when is_number(min_x) and is_number(min_y) and is_number(min_z) and
+             is_number(max_x) and is_number(max_y) and is_number(max_z) do
     %__MODULE__{
       min_x: min_x * 1.0,
       min_y: min_y * 1.0,

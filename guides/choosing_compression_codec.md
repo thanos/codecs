@@ -2,7 +2,7 @@
 
 This guide helps you select the right compression codec for your use case. It includes a comparison table, decision criteria, and worked examples.
 
-> ### Is the data spatial—or spatially representable?
+> ### Is the data spatial, or spatially representable?
 >
 > Compression codecs operate on arbitrary binaries. If records represent
 > coordinates, points, normals, colors, oriented particles, or Gaussian splats,
@@ -72,15 +72,15 @@ Answer the following questions to narrow your choice:
 
 ### 2. How fast does compression need to be?
 
-- **Under 1 GB/s** -- LZ4 or Snappy.
-- **Under 500 MB/s** -- Zstd level 1-3, Blosc2 with LZ4 inner codec.
-- **No constraint** -- Zstd high levels (9-22) or Bzip2.
+- **Need >= ~1 GB/s** - LZ4 or Snappy.
+- **Need >= ~300-500 MB/s** - Zstd level 1-3, Blosc2 with LZ4 inner codec.
+- **No constraint** - Zstd high levels (9-22) or Bzip2.
 
 ### 3. How fast does decompression need to be?
 
-- **Multi-GB/s required** -- LZ4 or Snappy.
-- **Fast, under 1 GB/s** -- Zstd any level, Blosc2.
-- **No constraint** -- Any codec. Bzip2 decompression is typically 50-200 MB/s.
+- **Need multi-GB/s** - LZ4 or Snappy.
+- **Need ~1 GB/s class** - Zstd any level, Blosc2.
+- **No constraint** - Any codec. Bzip2 decompression is typically much slower.
 
 ### 4. How much memory can you spare?
 
@@ -204,7 +204,7 @@ A research pipeline archives float64 measurement arrays to cold storage.
 )
 ```
 
-Rationale: The byte shuffle reorders bytes within each 8-byte float, grouping high-order bytes (often similar) together. Zstd then achieves ratio gains of 2-10x compared to compressing the raw array.
+Rationale: The byte shuffle reorders bytes within each 8-byte float, grouping high-order bytes (often similar) together. On typed arrays this often yields about a 2-4x ratio gain versus compressing the raw array (illustrative; see the Blosc2 guide table).
 
 ### Example 4: Log File Archival
 

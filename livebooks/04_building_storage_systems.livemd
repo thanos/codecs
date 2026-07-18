@@ -16,7 +16,7 @@
 # )
 
 Mix.install( [
-    {:ex_codecs, "~> 0.2"}, 
+    {:ex_codecs, "~> 0.2.3"}, 
     {:jason, "~> 1.4"}, 
     {:kino, "~> 0.14"}, 
     {:kino_vega_lite, "~> 0.1.13"}
@@ -166,7 +166,10 @@ end
 ### Using the Compressed Store
 
 ```elixir
-{:ok, _pid} = CompressedStore.start_link(codec: :zstd, opts: [level: 3])
+case CompressedStore.start_link(codec: :zstd, opts: [level: 3]) do
+  {:ok, _pid} -> :ok
+  {:error, {:already_started, _pid}} -> :ok
+end
 
 CompressedStore.put(:doc1, String.duplicate("Hello, World! ", 1000))
 CompressedStore.put(:doc2, :crypto.strong_rand_bytes(4096) |> Base.encode64())
@@ -274,7 +277,10 @@ end
 ### Using the Multi-Codec Store
 
 ```elixir
-{:ok, _pid} = MultiCodecStore.start_link()
+case MultiCodecStore.start_link() do
+  {:ok, _pid} -> :ok
+  {:error, {:already_started, _pid}} -> :ok
+end
 
 datasets = %{
   repetitive: String.duplicate("abcabcabc", 5000),
@@ -318,19 +324,25 @@ Codec distribution:
 ```elixir
 defmodule ChunkedCompressor do
   @moduledoc """
-  Compresses large data in chunks to limit memory usage.
+  Compresses large data in fixed-size chunks to limit peak memory usage.
+
+  The container stores the chunk count, the original byte size, and an offset
+  table so individual chunks can be decompressed on demand (random access)
+  without re-decoding the whole blob.
   """
   @default_chunk_size 64 * 1024
 
   def compress(data, codec \\ :zstd, opts \\ [], chunk_size \\ @default_chunk_size) do
-    chunks = for <<chunk::binary-size(chunk_size) <- data>>, do: chunk
+    chunks = chunk_data(data, chunk_size)
 
-    compressed_chunks = Enum.map(chunks, fn chunk ->
-      {:ok, enc} = ExCodecs.encode(codec, chunk, opts)
-      enc
-    end)
+    compressed_chunks =
+      Enum.map(chunks, fn chunk ->
+        {:ok, enc} = ExCodecs.encode(codec, chunk, opts)
+        enc
+      end)
 
-    offsets = compressed_chunks
+    offsets =
+      compressed_chunks
       |> Enum.scan(0, fn chunk, acc -> acc + byte_size(chunk) end)
       |> Enum.drop(-1)
       |> List.insert_at(0, 0)
@@ -346,27 +358,63 @@ defmodule ChunkedCompressor do
   end
 
   def decompress(blob, codec \\ :zstd) do
-    <<num_chunks::unsigned-big-32, _original_size::unsigned-big-64, rest::binary>> = blob
+    <<num_chunks::unsigned-big-32, original_size::unsigned-big-64, rest::binary>> = blob
 
     offsets_size = num_chunks * 4
-    <<offsets::binary-size(offsets_size), chunks_binary::binary>> = rest
+    <<offsets::binary-size(^offsets_size), chunks_binary::binary>> = rest
 
     offsets_list = for <<offset::unsigned-big-32 <- offsets>>, do: offset
     offsets_list = offsets_list ++ [byte_size(chunks_binary)]
 
-    chunks = Enum.chunk_every(offsets_list, 2, 1, :discard)
+    chunks =
+      Enum.chunk_every(offsets_list, 2, 1, :discard)
       |> Enum.map(fn [start_off, end_off] ->
-        size = end_off - start_off
-        <<_::binary-size(start_off), chunk::binary-size(size), _::binary>> = chunks_binary
-        chunk
+        binary_part(chunks_binary, start_off, end_off - start_off)
       end)
 
-    decompressed = Enum.map(chunks, fn chunk ->
-      {:ok, dec} = ExCodecs.decode(codec, chunk)
-      dec
-    end)
+    decompressed =
+      Enum.map(chunks, fn chunk ->
+        {:ok, dec} = ExCodecs.decode(codec, chunk)
+        dec
+      end)
 
-    {:ok, IO.iodata_to_binary(decompressed)}
+    result = IO.iodata_to_binary(decompressed)
+
+    if byte_size(result) == original_size do
+      {:ok, result}
+    else
+      {:error, :size_mismatch}
+    end
+  end
+
+  @doc """
+  Decompresses a single chunk by 0-based index, using the offset table.
+  """
+  def read_chunk(blob, index, codec \\ :zstd) do
+    <<num_chunks::unsigned-big-32, _original_size::unsigned-big-64, rest::binary>> = blob
+
+    if index < 0 or index >= num_chunks do
+      {:error, :out_of_range}
+    else
+      offsets_size = num_chunks * 4
+      <<offsets::binary-size(^offsets_size), chunks_binary::binary>> = rest
+
+      offsets_list = for <<offset::unsigned-big-32 <- offsets>>, do: offset
+      offsets_list = offsets_list ++ [byte_size(chunks_binary)]
+
+      [start_off, end_off] = Enum.at(Enum.chunk_every(offsets_list, 2, 1, :discard), index)
+      chunk = binary_part(chunks_binary, start_off, end_off - start_off)
+
+      ExCodecs.decode(codec, chunk)
+    end
+  end
+
+  defp chunk_data(data, chunk_size) when is_integer(chunk_size) and chunk_size > 0 do
+    case data do
+      <<chunk::binary-size(^chunk_size), rest::binary>> -> [chunk | chunk_data(rest, chunk_size)]
+      <<>> -> []
+      remainder when is_binary(remainder) -> [remainder]
+    end
   end
 end
 ```
@@ -383,19 +431,26 @@ large_data = String.duplicate("This is a chunk of data that repeats. ", 10000)
 {:ok, compressed} = ChunkedCompressor.compress(large_data, :zstd)
 {:ok, recovered} = ChunkedCompressor.decompress(compressed, :zstd)
 
+<<num_chunks::unsigned-big-32, _::unsigned-big-64, _::binary>> = compressed
+{:ok, first_chunk} = ChunkedCompressor.read_chunk(compressed, 0, :zstd)
+
 IO.puts("Original:   #{byte_size(large_data)} bytes")
 IO.puts("Compressed: #{byte_size(compressed)} bytes")
 IO.puts("Ratio:      #{Float.round(100 * byte_size(compressed) / byte_size(large_data), 1)}%")
+IO.puts("Chunks:     #{num_chunks}")
 IO.puts("Round-trip: #{recovered == large_data}")
+IO.puts("Random access chunk 0: #{byte_size(first_chunk)} bytes (matches: #{first_chunk == binary_part(large_data, 0, 64 * 1024)})")
 ```
 
 <!-- livebook:{"output":true} -->
 
 ```
 Original:   380000 bytes
-Compressed: 322 bytes
+Compressed: 384 bytes
 Ratio:      0.1%
-Round-trip: false
+Chunks:     6
+Round-trip: true
+Random access chunk 0: 65536 bytes (matches: true)
 ```
 
 <!-- livebook:{"output":true} -->
@@ -438,6 +493,24 @@ end
 
 ```
 {:ok, <<40, 181, 47, 253, 32, 9, 73, 0, 0, 115, 111, 109, 101, 32, 100, 97, 116, 97>>}
+```
+
+```elixir
+# Exercise the error branches with real failures.
+results =
+  [
+    {:ok, _} = ExCodecs.encode(:zstd, "ok"),
+    {:error, %ExCodecs.Error{reason: :invalid_options}} =
+      ExCodecs.encode(:zstd, "x", level: 99),
+    {:error, %ExCodecs.Error{reason: :decompression_failed}} =
+      ExCodecs.decode(:zstd, "not a zstd frame"),
+    {:error, %ExCodecs.Error{reason: :unsupported_codec}} =
+      ExCodecs.encode(:nonexistent, "x")
+  ]
+
+for {tag, {status, _} = result} <- Enum.zip([:ok, :bad_level, :bad_frame, :bad_codec], results) do
+  IO.puts("#{String.pad_trailing("#{tag}", 12)} -> #{inspect(result)}")
+end
 ```
 
 ```elixir
@@ -508,7 +581,7 @@ defmodule CompressWithFallback do
     |> Enum.reduce_while({:error, :no_codec_available}, fn codec, _acc ->
       case ExCodecs.encode(codec, data) do
         {:ok, compressed} -> {:halt, {:ok, {codec, compressed}}}
-        {:error, _} -> {:cont, {:error, :codec_failed}}
+        {:error, err} -> {:cont, {:error, {codec, err.reason}}}
       end
     end)
   end
@@ -540,6 +613,7 @@ defmodule CompressedETS do
   ETS-backed storage with transparent compression.
   """
   def new(name \\ :compressed_store) do
+    if :ets.whereis(name) != :undefined, do: :ets.delete(name)
     :ets.new(name, [:set, :public, :named_table])
     name
   end
@@ -655,7 +729,14 @@ defmodule CompressedFileIO do
   end
 
   defp bin_to_codec_atom(bin) do
-    bin |> String.trim_trailing() |> String.to_atom()
+    case bin |> String.trim_trailing() do
+      "zstd" -> :zstd
+      "lz4" -> :lz4
+      "snappy" -> :snappy
+      "bzip2" -> :bzip2
+      "blosc2" -> :blosc2
+      other -> {:error, {:unknown_codec, other}}
+    end
   end
 end
 ```

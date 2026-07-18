@@ -19,8 +19,8 @@ defmodule ExCodecs.Compression.Blosc2 do
   | B2ND (N-D arrays) | No |
 
   For large data, split buffers yourself and store multiple chunks. Usability
-  for “compress my array slice in Elixir” is full; for “Blosc2 as a database
-  file format”, use python/C Blosc2.
+  for "compress my array slice in Elixir" is full; for "Blosc2 as a database
+  file format", use python/C Blosc2.
 
   ## Options
 
@@ -100,6 +100,7 @@ defmodule ExCodecs.Compression.Blosc2 do
         version: "c-blosc2-chunk/pure-rust"
       }
   """
+  @impl true
   def __codec_info__ do
     %ExCodecs.Codec{
       name: :blosc2,
@@ -202,15 +203,19 @@ defmodule ExCodecs.Compression.Blosc2 do
 
     * `data` (`binary()`) — one chunk produced by this codec or by
       C/python-blosc2 single-buffer `compress`
-    * `opts` (`term()`) — ignored by this direct function; callers using the
-      codec behaviour or registry API should pass the keyword list `[]`
+    * `opts` (`keyword()`) — optional `:max_output_size` (positive integer
+      bytes, default 256 MiB)
 
   ## Returns
 
     * `{:ok, decompressed :: binary()}` on success
     * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when `data` is not a
-      binary, the chunk header is shorter than 16 bytes, the declared output
-      exceeds 1 GiB, or the NIF raises an argument error
+      binary, `opts` is not a list, the chunk header is shorter than 16 bytes,
+      or the NIF raises an argument error
+    * `{:error, %ExCodecs.Error{reason: :invalid_options}}` when
+      `:max_output_size` is not a positive integer
+    * `{:error, %ExCodecs.Error{reason: :output_limit_exceeded}}` when the
+      declared chunk nbytes exceeds `:max_output_size` or the 1 GiB hard cap
     * `{:error, %ExCodecs.Error{reason: :decompression_failed}}` when the chunk
       is corrupt, truncated, unsupported, or is a Blosc2 container rather than
       a single chunk
@@ -219,10 +224,9 @@ defmodule ExCodecs.Compression.Blosc2 do
 
   ## Raises / Exceptions
 
-  Data guard failures and `ErlangError`/`ArgumentError` exceptions from the NIF
-  call are converted to error tuples. Because `opts` is ignored, this direct
-  function also accepts non-list option terms. Unexpected exception classes
-  may propagate.
+  Guard failures and `ErlangError`/`ArgumentError` exceptions from the NIF
+  call are converted to error tuples. Unexpected exception classes may
+  propagate.
 
   ## Examples
 

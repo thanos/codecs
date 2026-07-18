@@ -3,22 +3,11 @@
 ```elixir
 # Use this install to work with the source code
 # Mix.install(
-#   [
-#     {:ex_codecs, path: Path.join(__DIR__, "..")}, 
-#     {:rustler, "~> 0.36"},
-#     {:jason, "~> 1.4"}, 
-#     {:kino, "~> 0.14"}, 
-#     {:kino_vega_lite, "~> 0.1.13"}
-#   ],
-#   config:  [rustler_precompiled: [force_build: [ex_codecs: true]]]
+#   [{:ex_codecs, path: Path.join(__DIR__, "..")}],
+#   config: [rustler_precompiled: [force_build: [ex_codecs: true]]]
 # )
 
-Mix.install( [
-    {:ex_codecs, "~> 0.2"}, 
-    {:jason, "~> 1.4"}, 
-    {:kino, "~> 0.14"}, 
-    {:kino_vega_lite, "~> 0.1.13"}
-  ])
+Mix.install([{:ex_codecs, "~> 0.2.3"}])
 ```
 
 ## Series
@@ -34,13 +23,8 @@ Mix.install( [
 
 ## Scientific Dataset Compression
 
-ExCodecs is designed to serve as the codec foundation for scientific computing
-libraries like ExZarr and ExArrow. This notebook demonstrates compression
-patterns optimized for numerical and scientific data.
-
-```elixir
-alias ExCodecs.Compression
-```
+This notebook demonstrates compression patterns that array stores such as
+[Zarr](https://zarr.dev/) use, optimized for numerical and scientific data.
 
 ## Array Data Layout
 
@@ -57,7 +41,7 @@ Blosc2 was specifically designed for this workload:
 # Generate a synthetic dataset (64-bit float array)
 n_elements = 100_000
 data = :binary.copy(<<3.14159265::float-64>>, n_elements)
-byte_size = byte_size(data)
+data_size = byte_size(data)
 
 # Compare codecs on regular numeric data
 codecs = [:zstd, :lz4, :snappy, :bzip2, :blosc2]
@@ -65,7 +49,7 @@ codecs = [:zstd, :lz4, :snappy, :bzip2, :blosc2]
 results =
   for codec <- codecs do
     {time, {:ok, compressed}} = :timer.tc(fn -> ExCodecs.encode(codec, data) end)
-    ratio = Float.round(byte_size / byte_size(compressed), 2)
+    ratio = Float.round(data_size / byte_size(compressed), 2)
     {codec, byte_size: byte_size(compressed), ratio: ratio, time_us: time}
   end
 
@@ -101,14 +85,10 @@ Large datasets are typically split into chunks, each compressed independently:
 
 ```elixir
 chunk_size = 1024 * 8  # 8 KiB chunks
-large_data = :crypto.strong_rand_bytes(1024 * 1024)  # 1 MiB
+large_data = :binary.copy(<<3.14159265::float-64>>, 131_072)  # 1 MiB of compressible floats
 
 chunks =
-  large_data
-  |> binary_part(0, byte_size(large_data))
-  |> then(fn data ->
-    for <<chunk::binary-size(chunk_size) <- data>>, do: chunk
-  end)
+  for <<chunk::binary-size(chunk_size) <- large_data>>, do: chunk
 
 compressed_chunks =
   chunks

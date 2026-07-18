@@ -20,7 +20,7 @@ ExCodecs uses [Benchee](https://github.com/bencheeorg/benchee) for benchmarking.
 ```elixir
 # In mix.exs
 {:benchee, "~> 1.3", only: :bench},
-{:benchee_html, "~>> 1.0", only: :bench}
+{:benchee_html, "~> 1.0", only: :bench}
 ```
 
 ### Creating a Benchmark
@@ -35,14 +35,12 @@ defp elixirc_paths(:bench), do: ["lib", "bench"]
 Create a benchmark file:
 
 ```elixir
-# bench/compression_benchmark.exs
-input_small = :crypto.strong_rand_bytes(1024)        # 1 KB
-input_medium = :crypto.strong_rand_bytes(1024 * 1024) # 1 MB
-input_large = :crypto.strong_rand_bytes(10 * 1024 * 1024) # 10 MB
-
-# For realistic data, use your actual production data:
-# input_json = File.read!("bench/data/sample.json")
-# input_floats = File.read!("bench/data/float_array.bin")
+# Illustrative sketch — prefer compressible fixtures over random bytes.
+# The shipped suite is `bench/compression_bench.exs` (run via `mix benchmarks`
+# or `MIX_ENV=bench mix run bench/run.exs`).
+input_small = File.read!("bench/data/sample.json") # or your own fixture
+input_medium = :binary.copy(input_small, 64)
+input_large = :binary.copy(input_small, 640)
 
 Benchee.run(
   %{
@@ -53,9 +51,9 @@ Benchee.run(
     "blosc2_encode" => fn input -> ExCodecs.encode(:blosc2, input) end
   },
   inputs: %{
-    "1 KB" => input_small,
-    "1 MB" => input_medium,
-    "10 MB" => input_large
+    "small" => input_small,
+    "medium" => input_medium,
+    "large" => input_large
   },
   time: 10,
   memory_time: 2,
@@ -63,10 +61,12 @@ Benchee.run(
 )
 ```
 
-Run it:
+Run the shipped suite:
 
 ```bash
-MIX_ENV=bench mix run bench/compression_benchmark.exs
+mix benchmarks
+# or
+MIX_ENV=bench mix run bench/run.exs
 ```
 
 ### Benchmarking with Options
@@ -202,11 +202,12 @@ Reproducible benchmarks are essential for comparing results across different sys
 1. **Pin the codec versions.** The versions of `zstd`, `lz4_flex`, `snap`, and `bzip2` crates in `Cargo.toml` determine the actual algorithm implementations. Record these versions.
 
 ```toml
-# native/ex_codecs_native/Cargo.toml
-zstd = "0.13"
+# native/ex_codecs_native/Cargo.toml (record the versions you actually build)
+structured-zstd = "0.0.48"
 lz4_flex = "0.11"
 snap = "1.1"
-bzip2 = "0.4"
+bzip2 = "0.6"
+blosc2-pure-rs = "0.2.4"
 ```
 
 2. **Use fixed input data.** Generate test data deterministically or use a fixed seed:
@@ -284,12 +285,14 @@ input = File.read!("bench/data/production_sample.json")
 
 Different data types compress differently. Always benchmark with data that matches your production workload:
 
-| Data Type      | Zstd L3 Ratio | LZ4 L1 Ratio |
-|---------------|----------------|---------------|
-| English text   | 3.0:1          | 2.0:1         |
-| JSON           | 2.8:1          | 1.9:1         |
-| Float64 array  | 2.0:1          | 1.5:1         |
-| Random bytes   | 1.0:1          | 1.0:1         |
+| Data Type      | Zstd L3 Ratio | LZ4 Ratio |
+|---------------|----------------|-----------|
+| English text   | 3.0:1          | 2.0:1     |
+| JSON           | 2.8:1          | 1.9:1     |
+| Float64 array  | 2.0:1          | 1.5:1     |
+| Random bytes   | 1.0:1          | 1.0:1     |
+
+(Illustrative order-of-magnitude ratios; benchmark your own data.)
 
 Results from one data type do not generalize to another.
 
@@ -314,18 +317,16 @@ Decompression speed matters as much as compression speed for read-heavy workload
 
 ## Recommended Benchmark Suite
 
-Create a comprehensive benchmark suite that covers these scenarios:
+Create a benchmark suite that covers these scenarios:
 
 ### 1. Compression Throughput by Codec and Data Size
 
 ```elixir
-# bench/throughput.exs
+# Illustrative sketch — prefer compressible fixtures; random bytes only
+# measure incompressible worst-case overhead.
 sizes = [
-  {"1 KB", :crypto.strong_rand_bytes(1024)},
-  {"10 KB", :crypto.strong_rand_bytes(10 * 1024)},
-  {"100 KB", :crypto.strong_rand_bytes(100 * 1024)},
-  {"1 MB", :crypto.strong_rand_bytes(1024 * 1024)},
-  {"10 MB", :crypto.strong_rand_bytes(10 * 1024 * 1024)}
+  {"1 KB", File.read!("bench/data/sample.json")},
+  {"1 MB", :binary.copy(File.read!("bench/data/sample.json"), 64)}
 ]
 
 codecs = [:zstd, :lz4, :snappy, :bzip2, :blosc2]
@@ -425,7 +426,8 @@ end
 
 ### The Speed-Ratio Tradeoff
 
-Plot compression ratio vs. speed for each codec and configuration:
+Plot compression ratio vs. speed for each codec and configuration.
+The ASCII plot below is **illustrative**, not measured on ExCodecs:
 
 ```
 Ratio
@@ -435,13 +437,13 @@ Ratio
     |                 * Zstd-5
 3.0 |            * Zstd-3
     |       * Zstd-1
-2.0 |    * LZ4-1   * Snappy
+2.0 |    * LZ4     * Snappy
     |
 1.0 +----------------------------------------- Speed
-     500 MB/s                    10 MB/s
+     fast                                  slow
 ```
 
-Choose the point that meets your requirements. If you need >3:1 ratio and >100 MB/s, Zstd level 5 is a good choice. If you need >500 MB/s, LZ4 or Snappy are your options.
+Choose the tradeoff that meets your requirements, then confirm with a Benchee run on your data.
 
 ### Context Matters
 

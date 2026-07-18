@@ -3,6 +3,7 @@ mod blosc2_codec;
 mod bzip2_codec;
 mod lz4_codec;
 mod snappy_codec;
+mod spatial;
 mod util;
 mod zstd_codec;
 
@@ -16,5 +17,6 @@ fn codec_versions() -> std::collections::HashMap<&'static str, String> {
     versions.insert("snappy", snappy_codec::version());
     versions.insert("bzip2", bzip2_codec::version());
     versions.insert("blosc2", blosc2_codec::version());
+    versions.insert("spatial", "excp-gspl-ply-1".to_string());
     versions
 }

@@ -1,6 +1,12 @@
 defmodule ExCodecs.Spatial.TypesTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Spatial.Gaussian
+  doctest ExCodecs.Spatial.GaussianCloud
+  doctest ExCodecs.Spatial.Metadata
+  doctest ExCodecs.Spatial.Transform
+  doctest ExCodecs.Spatial.PointCloud
+
   alias ExCodecs.Spatial.{
     Bounds,
     Gaussian,

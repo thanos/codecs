@@ -74,6 +74,7 @@ defmodule ExCodecs.Compression.Zstd do
         version: "structured-zstd-0.0.48"
       }
   """
+  @impl true
   def __codec_info__ do
     %ExCodecs.Codec{
       name: :zstd,
@@ -86,7 +87,18 @@ defmodule ExCodecs.Compression.Zstd do
     }
   end
 
-  defp zstd_version, do: "structured-zstd-0.0.48"
+  defp zstd_version do
+    case ExCodecs.Native.nif_loaded?() do
+      true ->
+        versions = ExCodecs.Native.codec_versions()
+        Map.get(versions, "zstd", "structured-zstd-0.0.48")
+
+      false ->
+        "structured-zstd-0.0.48"
+    end
+  rescue
+    _ -> "structured-zstd-0.0.48"
+  end
 
   @doc """
   Compresses a binary with pure-Rust Zstd.
@@ -114,6 +126,12 @@ defmodule ExCodecs.Compression.Zstd do
   Guard/option validation failures and `ErlangError`/`ArgumentError`
   exceptions from the NIF call are converted to error tuples. Unexpected
   exception classes may propagate.
+
+  ## Notes
+
+  The Elixir layer rejects out-of-range `:level` with `:invalid_options`,
+  while the Rust NIF silently clamps. Direct `ExCodecs.Native` callers bypass
+  this validation.
 
   ## Examples
 

@@ -177,13 +177,19 @@ defmodule ExCodecs.CoverageBoostTest do
       g =
         struct(Gaussian,
           position: {0.0, 0.0, 0.0},
+          color: {0.1, 0.2, 0.3},
           sh: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
         )
 
       cloud = GaussianCloud.new([g])
-      assert {:ok, bin} = Gsplat.encode(cloud)
-      assert {:ok, decoded} = Gsplat.decode(bin)
-      assert hd(decoded.gaussians).sh != nil
+      assert {:ok, bin} = Gsplat.encode(cloud, accel: false)
+      # Flat SH must drop 3 DC floats → sh_rest=3 (not 5 from dropping only the head).
+      assert byte_size(bin) == 18 + 56 + 12
+      assert {:ok, decoded} = Gsplat.decode(bin, accel: false)
+      assert [[_, _, _], [r1, r2, r3]] = hd(decoded.gaussians).sh
+      assert_in_delta r1, 0.4, 1.0e-6
+      assert_in_delta r2, 0.5, 1.0e-6
+      assert_in_delta r3, 0.6, 1.0e-6
 
       # Valid header with one gaussian requiring SH floats that are missing.
       header = <<"GSPL", 1::little-16, 0::little-16, 1::little-64, 3::little-16>>
@@ -200,7 +206,9 @@ defmodule ExCodecs.CoverageBoostTest do
       assert {:ok, _} = PLY.encode(cloud, format: :binary_le)
       assert {:ok, _} = PLY.encode(cloud, format: :little)
       assert {:ok, _} = PLY.encode(cloud, format: :big)
-      assert {:ok, _} = PLY.encode(cloud, format: :unknown_defaults_ascii)
+
+      assert {:error, %{reason: :invalid_options}} =
+               PLY.encode(cloud, format: :unknown_defaults_ascii)
 
       assert {:error, %{reason: :invalid_data}} = PLY.decode(123)
 
@@ -346,7 +354,7 @@ defmodule ExCodecs.CoverageBoostTest do
 
       assert {:ok, _} = PLY.encode(sparse, format: :ascii)
 
-      assert {:ok, weird_cloud} =
+      assert {:error, %{reason: :invalid_data}} =
                PLY.decode("""
                ply
                format ascii 1.0
@@ -358,8 +366,6 @@ defmodule ExCodecs.CoverageBoostTest do
                end_header
                1 2 3 not-a-number
                """)
-
-      assert hd(weird_cloud.points).attributes["weird"] == 0.0
 
       assert {:ok, _} =
                PLY.decode("ply\nformat ascii 1.0\nelement vertex 0\nend_header")
@@ -429,7 +435,8 @@ defmodule ExCodecs.CoverageBoostTest do
       File.write!(path, excp)
 
       assert [%Point{}] =
-               Spatial.stream_decode(path, format: :spatial_binary) |> Enum.to_list()
+               Spatial.stream_decode(path, format: :spatial_binary, source: :file)
+               |> Enum.to_list()
     end
   end
 end

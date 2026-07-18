@@ -233,7 +233,7 @@ defmodule ExCodecs.Error do
       iex> ExCodecs.Error.matches?({:error, error}, :invalid_data)
       false
   """
-  @spec matches?({:error, t()}, error_reason()) :: boolean()
+  @spec matches?(term(), error_reason()) :: boolean()
   def matches?({:error, %__MODULE__{reason: reason}}, reason), do: true
   def matches?(_, _), do: false
 end

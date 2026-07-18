@@ -15,10 +15,13 @@ defmodule ExCodecs.Spatial.CoverageTest do
     end
 
     test "unsupported version and truncation" do
-      assert {:error, _} = Binary.decode(<<"EXCP", 99::little-16, 0::little-16, 1::little-64>>)
-      assert {:error, _} = Binary.decode(<<"EXCP", 1::little-16, 1::little-16, 1::little-64, 0, 1>>)
+      assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :spatial_binary}} =
+               Binary.decode(<<"EXCP", 99::little-16, 0::little-16, 1::little-64>>)
 
-      assert [{:error, _}] =
+      assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :spatial_binary}} =
+               Binary.decode(<<"EXCP", 1::little-16, 1::little-16, 1::little-64, 0, 1>>)
+
+      assert [{:error, %ExCodecs.Error{}}] =
                Binary.stream_decode(<<"nope">>) |> Enum.to_list()
     end
 
@@ -29,16 +32,18 @@ defmodule ExCodecs.Spatial.CoverageTest do
 
   describe "gsplat edges" do
     test "unsupported version and truncation" do
-      assert {:error, _} =
+      assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :gsplat}} =
                Gsplat.decode(<<"GSPL", 9::little-16, 0::little-16, 1::little-64, 0::little-16>>)
 
-      assert {:error, _} =
+      assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :gsplat}} =
                Gsplat.decode(
                  <<"GSPL", 1::little-16, 0::little-16, 1::little-64, 0::little-16, 1, 2>>
                )
 
-      assert [{:error, _}] = Gsplat.stream_decode(<<"nope">>) |> Enum.to_list()
-      assert {:error, _} = Gsplat.encode(%{})
+      assert [{:error, %ExCodecs.Error{}}] = Gsplat.stream_decode(<<"nope">>) |> Enum.to_list()
+
+      assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :gsplat}} =
+               Gsplat.encode(%{})
     end
   end
 
@@ -116,10 +121,10 @@ defmodule ExCodecs.Spatial.CoverageTest do
     end
 
     test "missing magic / format / vertex element" do
-      assert {:error, _} = PLY.decode("format ascii 1.0\nend_header\n")
-      assert {:error, _} = PLY.decode("ply\nelement vertex 0\nend_header\n")
+      assert {:error, %{reason: :invalid_data}} = PLY.decode("format ascii 1.0\nend_header\n")
+      assert {:error, %{reason: :invalid_data}} = PLY.decode("ply\nelement vertex 0\nend_header\n")
 
-      assert {:error, _} =
+      assert {:error, %{reason: :invalid_data}} =
                PLY.decode("ply\nformat ascii 1.0\nend_header\n")
     end
 
@@ -132,7 +137,7 @@ defmodule ExCodecs.Spatial.CoverageTest do
       end_header
       """
 
-      assert {:error, _} = PLY.decode(data)
+      assert {:error, %{reason: :invalid_data}} = PLY.decode(data)
     end
 
     test "stream_decode file path" do
@@ -143,7 +148,7 @@ defmodule ExCodecs.Spatial.CoverageTest do
       {:ok, bin} = PLY.encode(cloud)
       File.write!(path, bin)
 
-      assert [%Point{x: x}] = PLY.stream_decode(path) |> Enum.to_list()
+      assert [%Point{x: x}] = PLY.stream_decode(path, source: :file) |> Enum.to_list()
       assert_in_delta x, 9.0, 0.0001
     end
 
@@ -168,7 +173,7 @@ defmodule ExCodecs.Spatial.CoverageTest do
       assert :ok =
                SpatialStream.encode_to_file([Point.new(1, 2, 3)], path, format: :ply)
 
-      assert {:error, _} =
+      assert {:error, %{reason: :io_error}} =
                SpatialStream.encode_to_file([Point.new(1, 2, 3)], "/no/such/dir/x.ply",
                  format: :ply
                )
@@ -184,11 +189,11 @@ defmodule ExCodecs.Spatial.CoverageTest do
       File.write!(path, bin)
 
       assert [%Point{}] =
-               Spatial.stream_decode(path, format: :spatial_binary) |> Enum.to_list()
+               Spatial.stream_decode(path, format: :spatial_binary, source: :file) |> Enum.to_list()
     end
 
     test "stream encode error tuples" do
-      assert {:error, _} =
+      assert {:error, %{reason: :invalid_data}} =
                Spatial.stream_encode([{:error, :boom}], format: :ply)
     end
 
@@ -223,12 +228,17 @@ defmodule ExCodecs.Spatial.CoverageTest do
       assert :ok = SpatialStream.encode_to_file(cloud, path, format: :gsplat)
 
       assert [%Gaussian{}] =
-               Spatial.stream_decode(path, format: :gsplat) |> Enum.to_list()
+               Spatial.stream_decode(path, format: :gsplat, source: :file) |> Enum.to_list()
     end
 
     test "propagates encode errors" do
-      assert {:error, _} =
-               SpatialStream.encode_to_file([Point.new(0, 0, 0)], "/tmp/x.gspl", format: :gsplat)
+      path =
+        Path.join(System.tmp_dir!(), "ex_codecs_bad_#{System.unique_integer([:positive])}.gspl")
+
+      on_exit(fn -> File.rm(path) end)
+
+      assert {:error, %ExCodecs.Error{reason: :invalid_data, codec: :gsplat}} =
+               SpatialStream.encode_to_file([Point.new(0, 0, 0)], path, format: :gsplat)
     end
   end
 end
