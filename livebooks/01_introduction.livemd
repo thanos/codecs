@@ -42,15 +42,21 @@ point-cloud and Gaussian formats use `ExCodecs.Spatial`.
 
 **Binary registry interface:**
 
-```elixir
+<!-- livebook:{"break_markdown":true} -->
+
+```markdown
 {:ok, encoded} = ExCodecs.encode(:some_codec, data)
 {:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
 decoded == data  # round-trip guarantee
 ```
 
+<!-- livebook:{"break_markdown":true} -->
+
 **Spatial category interface:**
 
-```elixir
+<!-- livebook:{"break_markdown":true} -->
+
+```
 {:ok, encoded} = ExCodecs.Spatial.encode(cloud, format: :ply)
 {:ok, decoded} = ExCodecs.Spatial.decode(encoded, format: :ply)
 ```
@@ -59,13 +65,13 @@ decoded == data  # round-trip guarantee
 
 Compression and encoding are fundamental to production systems:
 
-| Concern               | How Codecs Help                             |
-| --------------------- | ------------------------------------------- |
-| **Storage cost**      | Compressed data uses less disk space        |
-| **Network bandwidth** | Smaller payloads mean faster transfers      |
+| Concern               | How Codecs Help                                                               |
+| --------------------- | ----------------------------------------------------------------------------- |
+| **Storage cost**      | Compressed data uses less disk space                                          |
+| **Network bandwidth** | Smaller payloads mean faster transfers                                        |
 | **Data integrity**    | Some framed codecs detect corruption on decode; raw LZ4/Snappy blocks may not |
-| **Memory efficiency** | Compressed caches fit more in RAM           |
-| **Scientific data**   | Blosc2 shuffle+compress reduces typed-array size |
+| **Memory efficiency** | Compressed caches fit more in RAM                                             |
+| **Scientific data**   | Blosc2 shuffle+compress reduces typed-array size                              |
 
 A codec framework gives you a **single consistent API** over multiple algorithms, so you can choose the right tool per workload without rewriting integration code.
 

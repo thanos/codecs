@@ -195,8 +195,8 @@ Retrieved doc1 (14000 bytes)
 Storage Summary:
   Codec: :zstd
   Entries: 3
-  Original: 21644 bytes
-  Compressed: 4587 bytes
+  Original: 21645 bytes
+  Compressed: 4591 bytes
   Savings: 78.8%
 ```
 
@@ -422,7 +422,7 @@ end
 <!-- livebook:{"output":true} -->
 
 ```
-{:module, ChunkedCompressor, <<70, 79, 82, 49, 0, 0, 24, ...>>, ...}
+{:module, ChunkedCompressor, <<70, 79, 82, 49, 0, 0, 32, ...>>, ...}
 ```
 
 ```elixir
@@ -511,6 +511,24 @@ results =
 for {tag, {status, _} = result} <- Enum.zip([:ok, :bad_level, :bad_frame, :bad_codec], results) do
   IO.puts("#{String.pad_trailing("#{tag}", 12)} -> #{inspect(result)}")
 end
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+warning: variable "status" is unused (if the variable is not meant to be used, prefix it with an underscore)
+└─ work/ex_codecs/livebooks/04_building_storage_systems.livemd#cell:pruxa6uyvvgiepiz:13
+
+ok           -> {:ok, <<40, 181, 47, 253, 32, 2, 17, 0, 0, 111, 107>>}
+bad_level    -> {:error, %ExCodecs.Error{reason: :invalid_options, message: "Level must be an integer between 1 and 22", codec: nil, details: nil}}
+bad_frame    -> {:error, %ExCodecs.Error{reason: :decompression_failed, message: "Decompression failed", codec: :zstd, details: nil}}
+bad_codec    -> {:error, %ExCodecs.Error{reason: :unsupported_codec, message: "The specified codec is not supported", codec: :nonexistent, details: nil}}
+```
+
+<!-- livebook:{"output":true} -->
+
+```
+[:ok, :ok, :ok, :ok]
 ```
 
 ```elixir
@@ -650,7 +668,7 @@ end
 <!-- livebook:{"output":true} -->
 
 ```
-{:module, CompressedETS, <<70, 79, 82, 49, 0, 0, 19, ...>>, ...}
+{:module, CompressedETS, <<70, 79, 82, 49, 0, 0, 20, ...>>, ...}
 ```
 
 ```elixir
@@ -744,7 +762,7 @@ end
 <!-- livebook:{"output":true} -->
 
 ```
-{:module, CompressedFileIO, <<70, 79, 82, 49, 0, 0, 15, ...>>, ...}
+{:module, CompressedFileIO, <<70, 79, 82, 49, 0, 0, 16, ...>>, ...}
 ```
 
 ```elixir
