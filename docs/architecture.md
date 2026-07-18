@@ -97,7 +97,8 @@ The implementation is layered in four tiers:
    modules expose the category's struct↔format contract.
 
 4. **Native layer** -- Compression modules delegate to the Rustler NIF
-   (`ExCodecs.Native`). Spatial codecs are Elixir implementations in v0.2.0.
+   (`ExCodecs.Native`). Spatial codecs keep a pure-Elixir path and, since
+   v0.2.3, optional DirtyCpu / mmap acceleration via the same NIF crate.
 
 ---
 
@@ -727,12 +728,14 @@ predictable and navigable.
 
 ## Codec Categories
 
-### Spatial (implemented in 0.2.0)
+### Spatial (since 0.2.0; Rust accel in 0.2.3)
 
-Spatial codecs map structured geometric types to interchange formats. They are
-pure Elixir and use the specialized `ExCodecs.Spatial` API rather than forcing
-structs through the binary-only `ExCodecs.Codec` callbacks. They are registered
-in the shared catalog with `category: :spatial` and `interface: :spatial`.
+Spatial codecs map structured geometric types to interchange formats. They use
+the specialized `ExCodecs.Spatial` API rather than forcing structs through the
+binary-only `ExCodecs.Codec` callbacks. They are registered in the shared
+catalog with `category: :spatial` and `interface: :spatial`. Hot paths may use
+DirtyCpu pack/unpack and mmap-backed file streams when the NIF is loaded
+(`accel: false` forces Elixir).
 
 `ExCodecs.available_codecs/0` lists all available entries,
 `ExCodecs.available_codecs(:spatial)` filters the shared catalog, and

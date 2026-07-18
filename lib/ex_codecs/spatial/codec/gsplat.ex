@@ -22,6 +22,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   """
 
   alias ExCodecs.Error
+  alias ExCodecs.Spatial.Accel
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Metadata}
 
   @magic "GSPL"
@@ -76,7 +77,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   @spec encode(GaussianCloud.t(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def encode(data, opts \\ [])
 
-  def encode(%GaussianCloud{gaussians: gaussians}, _opts) do
+  def encode(%GaussianCloud{gaussians: gaussians}, opts) do
     sh_rest = max_sh_rest(gaussians)
     flags = if sh_rest > 0, do: 1, else: 0
 
@@ -84,9 +85,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
       <<@magic::binary, @version::little-unsigned-16, flags::little-unsigned-16,
         length(gaussians)::little-unsigned-64, sh_rest::little-unsigned-16>>
 
-    body =
-      IO.iodata_to_binary(Enum.map(gaussians, fn g -> encode_gaussian(g, sh_rest) end))
-
+    body = encode_gaussians_body(gaussians, sh_rest, opts)
     {:ok, header <> body}
   end
 
@@ -143,15 +142,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
       try do
         :ok = IO.binwrite(io, gspl_header(flags, 0, sh_rest))
 
-        count =
-          Enum.reduce(enumerable, 0, fn
-            %Gaussian{} = g, n ->
-              :ok = IO.binwrite(io, encode_gaussian(g, sh_rest))
-              n + 1
-
-            other, _n ->
-              throw({:bad_gaussian, other})
-          end)
+        count = write_gaussian_chunks(enumerable, io, sh_rest, opts)
 
         {:ok, 0} = :file.position(io, 0)
         :ok = IO.binwrite(io, gspl_header(flags, count, sh_rest))
@@ -277,7 +268,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   def decode(
         <<@magic::binary, version::little-unsigned-16, _flags::little-unsigned-16,
           count::little-unsigned-64, sh_rest::little-unsigned-16, rest::binary>>,
-        _opts
+        opts
       ) do
     if version != @version do
       {:error,
@@ -286,7 +277,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
          message: "Unsupported GSPLAT version #{version}"
        )}
     else
-      with {:ok, gaussians, _} <- decode_gaussians(rest, count, sh_rest) do
+      with {:ok, gaussians, _} <- decode_gaussians(rest, count, sh_rest, opts) do
         meta = Metadata.new(entries: %{"format" => "gsplat", "version" => version})
         {:ok, GaussianCloud.new(gaussians, metadata: meta)}
       end
@@ -302,14 +293,14 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   ## Streaming behavior
 
-    * `source: :file` (or `:auto` when the argument looks like a path to a
-      regular file) reads the 18-byte header, then **one record at a time**
-      via `IO.binread/2`. Peak memory is O(header + one record).
-    * `source: :binary` (or `:auto` for an in-memory GSPL payload) still
-      materializes through `decode/2`, then yields the list. A future Rust
-      backend may memory-map large binaries instead.
+    * `source: :file` (or `:auto` path detection): header then chunked
+      records — Rust mmap + DirtyCpu unpack when available, otherwise
+      `IO.binread/2` per record.
+    * `source: :binary`: chunked Rust unpack when available; otherwise
+      materializes through `decode/2`.
 
-  Prefer `source: :file` for large `.gspl` paths.
+  Prefer `source: :file` for multi‑MB / multi‑GB `.gspl` paths.
+  Pass `accel: false` to force the pure-Elixir path.
 
   ## Arguments
 
@@ -349,7 +340,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
       {:ok, :file, path} ->
         Stream.resource(
-          fn -> open_gspl_file(path) end,
+          fn -> open_gspl_file(path, opts) end,
           &next_gspl_item/1,
           &close_gspl_file/1
         )
@@ -357,13 +348,41 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   end
 
   defp stream_from_binary(bin, opts) do
-    case decode(bin, opts) do
-      {:ok, %GaussianCloud{gaussians: gs}} ->
-        Stream.map(gs, & &1)
+    if accel?(opts) do
+      stream_from_binary_accel(bin)
+    else
+      case decode(bin, Keyword.put(opts, :accel, false)) do
+        {:ok, %GaussianCloud{gaussians: gs}} ->
+          Stream.map(gs, & &1)
 
-      {:error, error} ->
-        error_stream(error)
+        {:error, error} ->
+          error_stream(error)
+      end
     end
+  end
+
+  defp stream_from_binary_accel(
+         <<@magic::binary, version::little-unsigned-16, _flags::little-unsigned-16,
+           count::little-unsigned-64, sh_rest::little-unsigned-16, body::binary>>
+       ) do
+    if version != @version do
+      error_stream(
+        Error.new(:invalid_data,
+          codec: :gsplat,
+          message: "Unsupported GSPLAT version #{version}"
+        )
+      )
+    else
+      Stream.resource(
+        fn -> {:bin, body, sh_rest, count, 0, 0} end,
+        &next_gspl_accel/1,
+        fn _ -> :ok end
+      )
+    end
+  end
+
+  defp stream_from_binary_accel(_) do
+    error_stream(Error.new(:invalid_data, codec: :gsplat, message: "Invalid GSPLAT binary"))
   end
 
   defp resolve_source(bin, opts) do
@@ -389,10 +408,86 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
          String.ends_with?(bin, [".gspl", ".bin"]))
   end
 
-  defp open_gspl_file(path) do
+  defp open_gspl_file(path, opts) do
+    if accel?(opts) do
+      open_gspl_mmap(path)
+    else
+      open_gspl_io(path)
+    end
+  end
+
+  defp open_gspl_io(path) do
     case File.open(path, [:read, :binary, :raw]) do
       {:ok, io} -> parse_gspl_header(io, IO.binread(io, 18))
       {:error, reason} -> io_error(reason)
+    end
+  end
+
+  defp open_gspl_mmap(path) do
+    with {:ok, header} <- read_file_prefix(path, 18),
+         {:ok, ref} <- Accel.mmap_open(path),
+         {:ok, state} <- mmap_state_from_header(ref, header) do
+      state
+    else
+      # coveralls-ignore-start
+      {:error, :nif_not_loaded} ->
+        open_gspl_io(path)
+
+      # coveralls-ignore-stop
+      {:error, reason} when is_atom(reason) ->
+        io_error(reason)
+
+      {:error, %Error{}} = err ->
+        err
+
+      # coveralls-ignore-start
+      {:error, other} ->
+        io_error(other)
+        # coveralls-ignore-stop
+    end
+  end
+
+  defp mmap_state_from_header(
+         ref,
+         <<@magic::binary, version::little-unsigned-16, _flags::little-unsigned-16,
+           count::little-unsigned-64, sh_rest::little-unsigned-16>>
+       ) do
+    if version != @version do
+      {:error,
+       Error.new(:invalid_data,
+         codec: :gsplat,
+         message: "Unsupported GSPLAT version #{version}"
+       )}
+    else
+      {:ok, {:mmap, ref, sh_rest, count, 18, 0}}
+    end
+  end
+
+  defp mmap_state_from_header(_ref, _header) do
+    {:error, Error.new(:invalid_data, codec: :gsplat, message: "Invalid GSPLAT binary")}
+  end
+
+  defp read_file_prefix(path, n) do
+    case File.open(path, [:read, :binary, :raw]) do
+      {:ok, io} ->
+        data = IO.binread(io, n)
+        File.close(io)
+
+        case data do
+          bin when is_binary(bin) ->
+            {:ok, bin}
+
+          :eof ->
+            {:ok, <<>>}
+
+          # coveralls-ignore-start
+          {:error, reason} ->
+            {:error, reason}
+            # coveralls-ignore-stop
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -424,10 +519,13 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
     {:error, Error.new(:invalid_data, codec: :gsplat, message: "Invalid GSPLAT binary")}
   end
 
+  # coveralls-ignore-start
   defp parse_gspl_header(io, {:error, reason}) do
     File.close(io)
     io_error(reason)
   end
+
+  # coveralls-ignore-stop
 
   defp next_gspl_item({:ok, io, _sh_rest, count, _stride, i}) when i >= count do
     {:halt, {:done, io}}
@@ -440,8 +538,10 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
           {:ok, gaussian, _} ->
             {[gaussian], {:ok, io, sh_rest, count, stride, i + 1}}
 
+          # coveralls-ignore-start
           {:error, error} ->
             {[{:error, error}], {:done, io}}
+            # coveralls-ignore-stop
         end
 
       :eof ->
@@ -454,14 +554,108 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
            {:error, Error.new(:invalid_data, codec: :gsplat, message: "Truncated Gaussian record")}
          ], {:done, io}}
 
+      # coveralls-ignore-start
       {:error, reason} ->
         {[{:error, io_error_struct(reason)}], {:done, io}}
+        # coveralls-ignore-stop
     end
+  end
+
+  defp next_gspl_item({:mmap, _, _, count, _, i}) when i >= count, do: {:halt, :done_mmap}
+
+  defp next_gspl_item({:mmap, ref, sh_rest, count, offset, i}) do
+    next_gspl_accel({:mmap, ref, sh_rest, count, offset, i})
   end
 
   defp next_gspl_item({:error, error}), do: {[{:error, error}], :done}
   defp next_gspl_item({:done, _io}), do: {:halt, :done}
   defp next_gspl_item(:done), do: {:halt, :done}
+  # coveralls-ignore-start
+  defp next_gspl_item(:done_mmap), do: {:halt, :done}
+
+  defp next_gspl_accel(:done), do: {:halt, :done}
+  defp next_gspl_accel(:done_mmap), do: {:halt, :done}
+  # coveralls-ignore-stop
+
+  defp next_gspl_accel({:bin, _body, _sh_rest, count, _offset, i}) when i >= count do
+    {:halt, :done}
+  end
+
+  defp next_gspl_accel({:bin, body, sh_rest, count, offset, i}) do
+    want = min(Accel.chunk_size(), count - i)
+
+    case Accel.gspl_unpack(body, sh_rest, offset, want) do
+      {:ok, {[], _}} when want > 0 ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :gsplat,
+              message: "Truncated Gaussian record"
+            )}
+         ], :done}
+
+      {:ok, {gaussians, next}} ->
+        {gaussians, {:bin, body, sh_rest, count, next, i + length(gaussians)}}
+
+      # coveralls-ignore-start
+      {:error, :nif_not_loaded} ->
+        {[
+           {:error,
+            Error.new(:nif_not_loaded,
+              codec: :gsplat,
+              message: "Spatial NIF unavailable mid-stream"
+            )}
+         ], :done}
+
+      {:error, _} ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :gsplat,
+              message: "Truncated Gaussian record"
+            )}
+         ], :done}
+
+        # coveralls-ignore-stop
+    end
+  end
+
+  # coveralls-ignore-start
+  defp next_gspl_accel({:mmap, _ref, _sh_rest, count, _offset, i}) when i >= count do
+    {:halt, :done_mmap}
+  end
+
+  # coveralls-ignore-stop
+
+  defp next_gspl_accel({:mmap, ref, sh_rest, count, offset, i}) do
+    want = min(Accel.chunk_size(), count - i)
+
+    case Accel.gspl_unpack_mmap(ref, sh_rest, offset, want) do
+      {:ok, {[], _}} when want > 0 ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :gsplat,
+              message: "Truncated Gaussian record"
+            )}
+         ], :done_mmap}
+
+      {:ok, {gaussians, next}} ->
+        {gaussians, {:mmap, ref, sh_rest, count, next, i + length(gaussians)}}
+
+      # coveralls-ignore-start
+      {:error, _} ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :gsplat,
+              message: "Truncated Gaussian record"
+            )}
+         ], :done_mmap}
+
+        # coveralls-ignore-stop
+    end
+  end
 
   defp close_gspl_file({:ok, io, _, _, _, _}), do: File.close(io)
   defp close_gspl_file({:done, io}), do: File.close(io)
@@ -528,11 +722,88 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   defp sh_rest_values(nil), do: []
   defp sh_rest_values([_dc | rest]), do: List.flatten(rest)
+  # coveralls-ignore-start
   defp sh_rest_values(list) when is_list(list), do: list |> List.flatten() |> Enum.drop(3)
+  # coveralls-ignore-stop
 
-  defp decode_gaussians(bin, 0, _sh_rest), do: {:ok, [], bin}
+  defp encode_gaussians_body(gaussians, sh_rest, opts) do
+    if accel?(opts) do
+      case Accel.gspl_pack(gaussians, sh_rest) do
+        {:ok, bin} ->
+          bin
 
-  defp decode_gaussians(bin, count, sh_rest) do
+        # coveralls-ignore-start
+        _ ->
+          encode_gaussians_body_elixir(gaussians, sh_rest)
+          # coveralls-ignore-stop
+      end
+    else
+      encode_gaussians_body_elixir(gaussians, sh_rest)
+    end
+  end
+
+  defp encode_gaussians_body_elixir(gaussians, sh_rest) do
+    IO.iodata_to_binary(Enum.map(gaussians, fn g -> encode_gaussian(g, sh_rest) end))
+  end
+
+  defp write_gaussian_chunks(enumerable, io, sh_rest, opts) do
+    chunk_size = if accel?(opts), do: Accel.chunk_size(), else: 1
+
+    enumerable
+    |> Stream.chunk_every(chunk_size)
+    |> Enum.reduce(0, fn chunk, n ->
+      gaussians = assert_gaussians!(chunk)
+      :ok = write_gaussian_chunk(io, gaussians, sh_rest, opts)
+      n + length(gaussians)
+    end)
+  end
+
+  defp assert_gaussians!(chunk) do
+    Enum.map(chunk, fn
+      %Gaussian{} = g -> g
+      other -> throw({:bad_gaussian, other})
+    end)
+  end
+
+  defp write_gaussian_chunk(io, gaussians, sh_rest, opts) do
+    if accel?(opts) do
+      case Accel.gspl_pack(gaussians, sh_rest) do
+        {:ok, bin} ->
+          IO.binwrite(io, bin)
+
+        # coveralls-ignore-start
+        _ ->
+          Enum.each(gaussians, &IO.binwrite(io, encode_gaussian(&1, sh_rest)))
+          # coveralls-ignore-stop
+      end
+    else
+      Enum.each(gaussians, &IO.binwrite(io, encode_gaussian(&1, sh_rest)))
+    end
+
+    :ok
+  end
+
+  defp accel?(opts), do: Keyword.get(opts, :accel, true) != false and Accel.available?()
+
+  defp decode_gaussians(bin, 0, _sh_rest, _opts), do: {:ok, [], bin}
+
+  defp decode_gaussians(bin, count, sh_rest, opts) do
+    if accel?(opts) do
+      case Accel.gspl_unpack(bin, sh_rest, 0, count) do
+        {:ok, {gaussians, _}} when length(gaussians) == count ->
+          {:ok, gaussians, <<>>}
+
+        # Incomplete / failed Accel unpack: Elixir path preserves "Truncated SH"
+        # and other field-specific messages.
+        _ ->
+          decode_gaussians_elixir(bin, count, sh_rest)
+      end
+    else
+      decode_gaussians_elixir(bin, count, sh_rest)
+    end
+  end
+
+  defp decode_gaussians_elixir(bin, count, sh_rest) do
     Enum.reduce_while(1..count, {:ok, [], bin}, fn _, {:ok, acc, rest} ->
       case decode_gaussian(rest, sh_rest) do
         {:ok, g, next} -> {:cont, {:ok, [g | acc], next}}

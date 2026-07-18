@@ -14,6 +14,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   """
 
   alias ExCodecs.Error
+  alias ExCodecs.Spatial.Accel
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Metadata, Point, PointCloud}
 
   @typedoc """
@@ -184,7 +185,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
     with {:ok, header, body} <- split_header(data),
          {:ok, parsed} <- parse_header(header) do
-      decode_parsed_body(resolve_as(as, parsed.properties), body, parsed)
+      decode_parsed_body(resolve_as(as, parsed.properties), body, parsed, opts)
     end
   end
 
@@ -712,14 +713,14 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
-  defp decode_parsed_body(:point_cloud, body, parsed) do
-    with {:ok, points} <- decode_vertices(body, parsed) do
+  defp decode_parsed_body(:point_cloud, body, parsed, opts) do
+    with {:ok, points} <- decode_vertices(body, parsed, opts) do
       {:ok, PointCloud.new(points, metadata: ply_metadata(parsed))}
     end
   end
 
-  defp decode_parsed_body(:gaussian_cloud, body, parsed) do
-    with {:ok, gaussians} <- decode_gaussians(body, parsed) do
+  defp decode_parsed_body(:gaussian_cloud, body, parsed, opts) do
+    with {:ok, gaussians} <- decode_gaussians(body, parsed, opts) do
       {:ok, GaussianCloud.new(gaussians, metadata: ply_metadata(parsed))}
     end
   end
@@ -731,7 +732,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     )
   end
 
-  defp decode_vertices(body, %{format: :ascii, count: count, properties: props}) do
+  defp decode_vertices(body, %{format: :ascii, count: count, properties: props}, _opts) do
     lines =
       body
       |> String.split(~r/\r\n|\n|\r/, trim: true)
@@ -754,7 +755,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
-  defp decode_vertices(body, %{format: endian, count: count, properties: props})
+  defp decode_vertices(body, %{format: endian, count: count, properties: props}, opts)
        when endian in [:binary_le, :binary_be] do
     stride = Enum.reduce(props, 0, fn p, acc -> acc + type_size(p.type) end)
     expected = stride * count
@@ -766,18 +767,46 @@ defmodule ExCodecs.Spatial.Codec.PLY do
          message: "Binary PLY body too short"
        )}
     else
-      {points, _} =
-        Enum.map_reduce(1..count, body, fn _, rest ->
-          {values, next} = unpack_row(rest, props, endian)
-          {values_to_point(values, props), next}
-        end)
-
-      {:ok, points}
+      decode_vertices_binary(body, props, endian, count, expected, opts)
     end
   end
 
-  defp decode_gaussians(body, parsed) do
-    with {:ok, points} <- decode_vertices(body, parsed) do
+  defp decode_vertices_binary(body, props, endian, count, expected, opts) do
+    if accel?(opts) do
+      types = Enum.map(props, & &1.type)
+
+      case Accel.ply_binary_unpack(body, types, endian, 0, count) do
+        {:ok, {rows, next}} when length(rows) == count and next >= expected ->
+          {:ok, Enum.map(rows, &values_to_point(&1, props))}
+
+        # coveralls-ignore-start
+        {:ok, _} ->
+          decode_vertices_binary_loop(body, props, endian, count)
+
+        {:error, :nif_not_loaded} ->
+          decode_vertices_binary_loop(body, props, endian, count)
+
+        {:error, _} ->
+          decode_vertices_binary_loop(body, props, endian, count)
+          # coveralls-ignore-stop
+      end
+    else
+      decode_vertices_binary_loop(body, props, endian, count)
+    end
+  end
+
+  defp decode_vertices_binary_loop(body, props, endian, count) do
+    {points, _} =
+      Enum.map_reduce(1..count, body, fn _, rest ->
+        {values, next} = unpack_row(rest, props, endian)
+        {values_to_point(values, props), next}
+      end)
+
+    {:ok, points}
+  end
+
+  defp decode_gaussians(body, parsed, opts) do
+    with {:ok, points} <- decode_vertices(body, parsed, opts) do
       {:ok, Enum.map(points, &point_to_gaussian/1)}
     end
   end
@@ -941,10 +970,10 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp open_ply_stream(path, opts) do
     case File.open(path, [:read, :binary, :raw]) do
       {:ok, io} ->
-        case scan_ply_header(io, "") do
-          {:ok, parsed, leftover} ->
+        case scan_ply_header(io, "", 0) do
+          {:ok, parsed, leftover, body_offset} ->
             as = resolve_as(Keyword.get(opts, :as, :auto), parsed.properties)
-            {:ok, init_ply_stream_state(io, leftover, parsed, as)}
+            {:ok, init_ply_stream_state(path, io, leftover, parsed, as, opts, body_offset)}
 
           {:error, error} ->
             File.close(io)
@@ -956,38 +985,72 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
-  defp init_ply_stream_state(io, leftover, %{format: :ascii} = parsed, as) do
+  defp init_ply_stream_state(
+         _path,
+         io,
+         leftover,
+         %{format: :ascii} = parsed,
+         as,
+         _opts,
+         _body_offset
+       ) do
     {:ascii, io, leftover, parsed, as, 0}
   end
 
-  defp init_ply_stream_state(io, leftover, %{format: endian} = parsed, as)
+  defp init_ply_stream_state(path, io, leftover, %{format: endian} = parsed, as, opts, body_offset)
        when endian in [:binary_le, :binary_be] do
+    if accel?(opts) do
+      case Accel.mmap_open(path) do
+        {:ok, ref} ->
+          File.close(io)
+          types = Enum.map(parsed.properties, & &1.type)
+          {:binary_mmap, ref, types, endian, parsed, as, body_offset, 0, 0}
+
+        # coveralls-ignore-start
+        {:error, :nif_not_loaded} ->
+          init_ply_binary_io_stream(io, leftover, parsed, as, endian)
+
+        {:error, _} ->
+          init_ply_binary_io_stream(io, leftover, parsed, as, endian)
+          # coveralls-ignore-stop
+      end
+    else
+      init_ply_binary_io_stream(io, leftover, parsed, as, endian)
+    end
+  end
+
+  defp init_ply_binary_io_stream(io, leftover, parsed, as, endian) do
     stride = Enum.reduce(parsed.properties, 0, fn p, acc -> acc + type_size(p.type) end)
     {:binary, io, leftover, endian, parsed, as, stride, 0}
   end
 
-  defp scan_ply_header(io, acc) do
+  defp scan_ply_header(io, acc, bytes_read) do
     case IO.binread(io, @header_scan_chunk) do
       data when is_binary(data) and byte_size(data) > 0 ->
         buf = acc <> data
-        match_or_continue_header(io, buf)
+        match_or_continue_header(io, buf, bytes_read + byte_size(data))
 
+      # coveralls-ignore-start
       {:error, reason} ->
         ply_io_error(reason)
 
+      # coveralls-ignore-stop
       _eof_or_empty ->
         header_eof_error(acc)
     end
   end
 
-  defp match_or_continue_header(io, buf) do
+  defp match_or_continue_header(io, buf, bytes_read) do
     case :binary.match(buf, "end_header") do
       {pos, len} ->
+        buf_start = bytes_read - byte_size(buf)
         header = binary_part(buf, 0, pos + len)
         rest = binary_part(buf, pos + len, byte_size(buf) - pos - len)
+        {body_rest, skip} = strip_leading_newlines_count(rest)
+        body_offset = buf_start + pos + len + skip
 
         with {:ok, parsed} <- parse_header(header) do
-          {:ok, parsed, strip_leading_newlines(rest)}
+          {:ok, parsed, body_rest, body_offset}
         end
 
       :nomatch when byte_size(buf) > @header_max_bytes ->
@@ -998,14 +1061,67 @@ defmodule ExCodecs.Spatial.Codec.PLY do
          )}
 
       :nomatch ->
-        scan_ply_header(io, buf)
+        scan_ply_header(io, buf, bytes_read)
     end
   end
+
+  defp strip_leading_newlines_count(<<"\r\n", rest::binary>>), do: {rest, 2}
+  defp strip_leading_newlines_count(<<"\n", rest::binary>>), do: {rest, 1}
+  defp strip_leading_newlines_count(<<"\r", rest::binary>>), do: {rest, 1}
+  defp strip_leading_newlines_count(bin), do: {bin, 0}
 
   defp header_eof_error(_acc) do
     # Acc never contains a complete end_header here: that case is handled in
     # match_or_continue_header/2 while chunks are still arriving.
     {:error, Error.new(:invalid_data, codec: :ply, message: "PLY header missing end_header")}
+  end
+
+  defp next_ply_stream_item(
+         {:ok, {:binary_mmap, _ref, _types, _endian, parsed, _as, _body_offset, _offset, i}}
+       )
+       when i >= parsed.count do
+    {:halt, :done_mmap}
+  end
+
+  defp next_ply_stream_item(
+         {:ok, {:binary_mmap, ref, types, endian, parsed, as, body_offset, offset, i}}
+       ) do
+    want = min(Accel.chunk_size(), parsed.count - i)
+
+    case Accel.ply_binary_unpack_mmap(ref, types, endian, body_offset + offset, want) do
+      {:ok, {[], _next}} when want > 0 ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :ply,
+              message: "Binary PLY body too short"
+            )}
+         ], :done_mmap}
+
+      {:ok, {rows, next_offset}} ->
+        items =
+          Enum.map(rows, fn values ->
+            emit_vertex(values_to_point(values, parsed.properties), as)
+          end)
+
+        new_offset = next_offset - body_offset
+
+        {items,
+         {:ok,
+          {:binary_mmap, ref, types, endian, parsed, as, body_offset, new_offset, i + length(rows)}}}
+
+      # coveralls-ignore-start
+      {:error, _} ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :ply,
+              message: "Binary PLY body too short"
+            )}
+         ], :done_mmap}
+
+        # coveralls-ignore-stop
+    end
   end
 
   defp next_ply_stream_item({:ok, {:binary, io, _buf, _endian, parsed, _as, _stride, i}})
@@ -1044,11 +1160,16 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp next_ply_stream_item({:error, error}), do: {[{:error, error}], :done}
   defp next_ply_stream_item({:done, _io}), do: {:halt, :done}
   defp next_ply_stream_item(:done), do: {:halt, :done}
+  defp next_ply_stream_item(:done_mmap), do: {:halt, :done_mmap}
 
   defp close_ply_stream({:ok, {:binary, io, _, _, _, _, _, _}}), do: File.close(io)
   defp close_ply_stream({:ok, {:ascii, io, _, _, _, _}}), do: File.close(io)
+  defp close_ply_stream({:ok, {:binary_mmap, _, _, _, _, _, _, _, _}}), do: :ok
   defp close_ply_stream({:done, io}), do: File.close(io)
+  defp close_ply_stream(:done_mmap), do: :ok
   defp close_ply_stream(_), do: :ok
+
+  defp accel?(opts), do: Keyword.get(opts, :accel, true) != false and Accel.available?()
 
   defp emit_vertex(point, :point_cloud), do: point
   defp emit_vertex(point, :gaussian_cloud), do: point_to_gaussian(point)
@@ -1063,9 +1184,11 @@ defmodule ExCodecs.Spatial.Codec.PLY do
       data when is_binary(data) and byte_size(data) > 0 ->
         take_exact_bytes(io, buf <> data, n)
 
+      # coveralls-ignore-start
       {:error, reason} ->
         ply_io_error(reason)
 
+      # coveralls-ignore-stop
       _eof_or_short ->
         {:error, Error.new(:invalid_data, codec: :ply, message: "Binary PLY body too short")}
     end
@@ -1090,9 +1213,11 @@ defmodule ExCodecs.Spatial.Codec.PLY do
       data when is_binary(data) and byte_size(data) > 0 ->
         take_ascii_vertex_line(io, buf <> data)
 
+      # coveralls-ignore-start
       {:error, reason} ->
         ply_io_error(reason)
 
+      # coveralls-ignore-stop
       _eof_or_empty ->
         trimmed = String.trim(buf)
 

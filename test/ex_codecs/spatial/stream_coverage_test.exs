@@ -2,8 +2,8 @@ defmodule ExCodecs.Spatial.StreamCoverageTest do
   use ExUnit.Case, async: true
 
   alias ExCodecs.Spatial
-  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
   alias ExCodecs.Spatial.Codec.{Binary, Gsplat, PLY}
+  alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
   alias ExCodecs.Spatial.Stream, as: SpatialStream
 
   defp tmp(ext) do

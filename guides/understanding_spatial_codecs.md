@@ -368,9 +368,12 @@ clouds. Magic bytes: `"GSPL"`.
 Wire layouts and schema rules are frozen in
 [Spatial wire formats](../docs/spatial_formats.md).
 
-Stream helpers: EXCP/GSPL **files** decode record-by-record from disk; PLY and
-in-memory binaries still materialize. Prefer explicit `source: :file` or
-`source: :binary`.
+Stream helpers (v0.2.3+): EXCP / GSPL / PLY **files** decode record-by-record
+from disk (bounded memory; mmap + Rust unpack when available). In-memory
+binaries use chunked Rust unpack when the NIF is loaded, otherwise materialize.
+`stream_encode/2` still collects then encodes; use `encode_to_file/3` with an
+explicit `:schema` for EXCP/GSPL incremental writes. Prefer explicit
+`source: :file` or `source: :binary`.
 
 ## Why a separate `ExCodecs.Spatial` API?
 

@@ -14,7 +14,7 @@
 # )
 
 Mix.install( [
-    {:ex_codecs, "~> 0.2"}, 
+    {:ex_codecs, "~> 0.2.3"}, 
     {:jason, "~> 1.4"}, 
     {:kino, "~> 0.14"}, 
     {:kino_vega_lite, "~> 0.1.13"}

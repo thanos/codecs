@@ -11,7 +11,7 @@
 # )
 
 Mix.install([
-  {:ex_codecs, "~> 0.2"}
+  {:ex_codecs, "~> 0.2.3"}
 ])
 ```
 
@@ -181,9 +181,10 @@ gaussian_cloud =
 
 ## Enumerable Helpers
 
-The current `stream_encode/2` and `stream_decode/2` names describe an
-enumerable-facing API. In v0.2.0 they still collect the complete enumerable or
-payload in memory; they are not incremental file I/O.
+`stream_decode/2` with `source: :file` reads one record/vertex at a time
+(bounded memory; mmap + Rust unpack when available). `stream_encode/2` still
+collects the enumerable, then encodes once — use `encode_to_file/3` with an
+explicit `:schema` for EXCP/GSPL incremental writes.
 
 ```elixir
 {:ok, streamed_payload} =

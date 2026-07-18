@@ -13,7 +13,7 @@
 # )
 
 Mix.install([
-  {:ex_codecs, "~> 0.2"}
+  {:ex_codecs, "~> 0.2.3"}
 ])
 ```
 

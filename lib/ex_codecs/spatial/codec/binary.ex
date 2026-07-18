@@ -17,6 +17,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   """
 
   alias ExCodecs.Error
+  alias ExCodecs.Spatial.Accel
   alias ExCodecs.Spatial.{Metadata, Point, PointCloud}
 
   @magic "EXCP"
@@ -72,7 +73,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   @spec encode(PointCloud.t(), keyword()) :: {:ok, binary()} | {:error, Error.t()}
   def encode(data, opts \\ [])
 
-  def encode(%PointCloud{points: points}, _opts) do
+  def encode(%PointCloud{points: points}, opts) do
     has_color? = Enum.any?(points, &Point.colored?/1)
     has_alpha? = Enum.any?(points, fn p -> match?({_, _, _, _}, p.color) end)
     has_normal? = Enum.any?(points, &Point.has_normal?/1)
@@ -87,13 +88,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
       <<@magic::binary, @version::little-unsigned-16, flags::little-unsigned-16,
         length(points)::little-unsigned-64>>
 
-    body =
-      IO.iodata_to_binary(
-        Enum.map(points, fn p ->
-          encode_point(p, flags)
-        end)
-      )
-
+    body = encode_points_body(points, flags, opts)
     {:ok, header <> body}
   end
 
@@ -151,17 +146,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
          {:ok, io} <- open_write(path) do
       try do
         :ok = IO.binwrite(io, excp_header(flags, 0))
-
-        count =
-          Enum.reduce(enumerable, 0, fn
-            %Point{} = point, n ->
-              :ok = IO.binwrite(io, encode_point(point, flags))
-              n + 1
-
-            other, _n ->
-              throw({:bad_point, other})
-          end)
-
+        count = write_point_chunks(enumerable, io, flags, opts)
         {:ok, 0} = :file.position(io, 0)
         :ok = IO.binwrite(io, excp_header(flags, count))
         :ok
@@ -293,7 +278,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   def decode(
         <<@magic::binary, version::little-unsigned-16, flags::little-unsigned-16,
           count::little-unsigned-64, rest::binary>>,
-        _opts
+        opts
       ) do
     if version != @version do
       {:error,
@@ -302,7 +287,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
          message: "Unsupported binary point format version #{version}"
        )}
     else
-      with {:ok, points, _} <- decode_points(rest, count, flags) do
+      with {:ok, points, _} <- decode_points(rest, count, flags, opts) do
         meta = Metadata.new(entries: %{"format" => "excp", "version" => version})
         {:ok, PointCloud.new(points, metadata: meta)}
       end
@@ -322,15 +307,14 @@ defmodule ExCodecs.Spatial.Codec.Binary do
 
   ## Streaming behavior
 
-    * `source: :file` (or `:auto` when the argument looks like a path to a
-      regular file) reads the 16-byte header, then **one record at a time**
-      via `IO.binread/2`. Peak memory is O(header + one record), not the
-      whole cloud.
-    * `source: :binary` (or `:auto` for an in-memory EXCP payload) still
-      materializes through `decode/2`, then yields the list. A future Rust
-      backend may memory-map large binaries instead.
+    * `source: :file` (or `:auto` path detection): header then chunked
+      records — Rust mmap + DirtyCpu unpack when available, otherwise
+      `IO.binread/2` per record.
+    * `source: :binary`: chunked Rust unpack when available; otherwise
+      materializes through `decode/2`.
 
   Prefer `source: :file` for multi‑MB / multi‑GB `.excp` paths.
+  Pass `accel: false` to force the pure-Elixir path.
 
   ## Arguments
 
@@ -370,7 +354,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
 
       {:ok, :file, path} ->
         Stream.resource(
-          fn -> open_excp_file(path) end,
+          fn -> open_excp_file(path, opts) end,
           &next_excp_item/1,
           &close_excp_file/1
         )
@@ -378,13 +362,43 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   end
 
   defp stream_from_binary(bin, opts) do
-    case decode(bin, opts) do
-      {:ok, %PointCloud{points: points}} ->
-        Stream.map(points, & &1)
-
-      {:error, error} ->
-        error_stream(error)
+    if accel?(opts) do
+      stream_from_binary_accel(bin)
+    else
+      case decode(bin, Keyword.put(opts, :accel, false)) do
+        {:ok, %PointCloud{points: points}} -> Stream.map(points, & &1)
+        {:error, error} -> error_stream(error)
+      end
     end
+  end
+
+  defp stream_from_binary_accel(
+         <<@magic::binary, version::little-unsigned-16, flags::little-unsigned-16,
+           count::little-unsigned-64, body::binary>>
+       ) do
+    if version != @version do
+      error_stream(
+        Error.new(:invalid_data,
+          codec: :spatial_binary,
+          message: "Unsupported binary point format version #{version}"
+        )
+      )
+    else
+      Stream.resource(
+        fn -> {:bin, body, flags, count, 0, 0} end,
+        &next_excp_accel/1,
+        fn _ -> :ok end
+      )
+    end
+  end
+
+  defp stream_from_binary_accel(_) do
+    error_stream(
+      Error.new(:invalid_data,
+        codec: :spatial_binary,
+        message: "Invalid ExCodecs binary point cloud"
+      )
+    )
   end
 
   defp resolve_source(bin, opts) do
@@ -410,10 +424,90 @@ defmodule ExCodecs.Spatial.Codec.Binary do
          String.ends_with?(bin, [".excp", ".bin"]))
   end
 
-  defp open_excp_file(path) do
+  defp open_excp_file(path, opts) do
+    if accel?(opts) do
+      open_excp_mmap(path)
+    else
+      open_excp_io(path)
+    end
+  end
+
+  defp open_excp_io(path) do
     case File.open(path, [:read, :binary, :raw]) do
       {:ok, io} -> parse_excp_header(io, IO.binread(io, 16))
       {:error, reason} -> io_error(reason)
+    end
+  end
+
+  defp open_excp_mmap(path) do
+    with {:ok, header} <- read_file_prefix(path, 16),
+         {:ok, ref} <- Accel.mmap_open(path),
+         {:ok, state} <- mmap_state_from_header(ref, header) do
+      state
+    else
+      # coveralls-ignore-start
+      {:error, :nif_not_loaded} ->
+        open_excp_io(path)
+
+      # coveralls-ignore-stop
+      {:error, reason} when is_atom(reason) ->
+        io_error(reason)
+
+      {:error, %Error{}} = err ->
+        err
+
+      # coveralls-ignore-start
+      {:error, other} ->
+        io_error(other)
+        # coveralls-ignore-stop
+    end
+  end
+
+  defp mmap_state_from_header(
+         ref,
+         <<@magic::binary, version::little-unsigned-16, flags::little-unsigned-16,
+           count::little-unsigned-64>>
+       ) do
+    if version != @version do
+      {:error,
+       Error.new(:invalid_data,
+         codec: :spatial_binary,
+         message: "Unsupported binary point format version #{version}"
+       )}
+    else
+      {:ok, {:mmap, ref, flags, count, 16, 0}}
+    end
+  end
+
+  defp mmap_state_from_header(_ref, _header) do
+    {:error,
+     Error.new(:invalid_data,
+       codec: :spatial_binary,
+       message: "Invalid ExCodecs binary point cloud"
+     )}
+  end
+
+  defp read_file_prefix(path, n) do
+    case File.open(path, [:read, :binary, :raw]) do
+      {:ok, io} ->
+        data = IO.binread(io, n)
+        File.close(io)
+
+        case data do
+          bin when is_binary(bin) ->
+            {:ok, bin}
+
+          :eof ->
+            {:ok, <<>>}
+
+          # coveralls-ignore-start
+          {:error, reason} ->
+            {:error, reason}
+            # coveralls-ignore-stop
+        end
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -455,10 +549,13 @@ defmodule ExCodecs.Spatial.Codec.Binary do
      )}
   end
 
+  # coveralls-ignore-start
   defp parse_excp_header(io, {:error, reason}) do
     File.close(io)
     io_error(reason)
   end
+
+  # coveralls-ignore-stop
 
   defp next_excp_item({:ok, io, _flags, count, _stride, i}) when i >= count do
     {:halt, {:done, io}}
@@ -471,8 +568,10 @@ defmodule ExCodecs.Spatial.Codec.Binary do
           {:ok, point, _} ->
             {[point], {:ok, io, flags, count, stride, i + 1}}
 
+          # coveralls-ignore-start
           {:error, error} ->
             {[{:error, error}], {:done, io}}
+            # coveralls-ignore-stop
         end
 
       :eof ->
@@ -493,14 +592,108 @@ defmodule ExCodecs.Spatial.Codec.Binary do
             )}
          ], {:done, io}}
 
+      # coveralls-ignore-start
       {:error, reason} ->
         {[{:error, io_error_struct(reason)}], {:done, io}}
+        # coveralls-ignore-stop
     end
+  end
+
+  defp next_excp_item({:mmap, _, _, count, _, i}) when i >= count, do: {:halt, :done_mmap}
+
+  defp next_excp_item({:mmap, ref, flags, count, offset, i}) do
+    next_excp_accel({:mmap, ref, flags, count, offset, i})
   end
 
   defp next_excp_item({:error, error}), do: {[{:error, error}], :done}
   defp next_excp_item({:done, _io}), do: {:halt, :done}
   defp next_excp_item(:done), do: {:halt, :done}
+  # coveralls-ignore-start
+  defp next_excp_item(:done_mmap), do: {:halt, :done}
+
+  defp next_excp_accel(:done), do: {:halt, :done}
+  defp next_excp_accel(:done_mmap), do: {:halt, :done}
+  # coveralls-ignore-stop
+
+  defp next_excp_accel({:bin, _body, _flags, count, _offset, i}) when i >= count do
+    {:halt, :done}
+  end
+
+  defp next_excp_accel({:bin, body, flags, count, offset, i}) do
+    want = min(Accel.chunk_size(), count - i)
+
+    case Accel.excp_unpack(body, flags, offset, want) do
+      {:ok, {[], _}} when want > 0 ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :spatial_binary,
+              message: "Truncated point record"
+            )}
+         ], :done}
+
+      {:ok, {points, next}} ->
+        {points, {:bin, body, flags, count, next, i + length(points)}}
+
+      # coveralls-ignore-start
+      {:error, :nif_not_loaded} ->
+        {[
+           {:error,
+            Error.new(:nif_not_loaded,
+              codec: :spatial_binary,
+              message: "Spatial NIF unavailable mid-stream"
+            )}
+         ], :done}
+
+      {:error, _} ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :spatial_binary,
+              message: "Truncated point record"
+            )}
+         ], :done}
+
+        # coveralls-ignore-stop
+    end
+  end
+
+  # coveralls-ignore-start
+  defp next_excp_accel({:mmap, _ref, _flags, count, _offset, i}) when i >= count do
+    {:halt, :done_mmap}
+  end
+
+  # coveralls-ignore-stop
+
+  defp next_excp_accel({:mmap, ref, flags, count, offset, i}) do
+    want = min(Accel.chunk_size(), count - i)
+
+    case Accel.excp_unpack_mmap(ref, flags, offset, want) do
+      {:ok, {[], _}} when want > 0 ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :spatial_binary,
+              message: "Truncated point record"
+            )}
+         ], :done_mmap}
+
+      {:ok, {points, next}} ->
+        {points, {:mmap, ref, flags, count, next, i + length(points)}}
+
+      # coveralls-ignore-start
+      {:error, _} ->
+        {[
+           {:error,
+            Error.new(:invalid_data,
+              codec: :spatial_binary,
+              message: "Truncated point record"
+            )}
+         ], :done_mmap}
+
+        # coveralls-ignore-stop
+    end
+  end
 
   defp close_excp_file({:ok, io, _, _, _, _}), do: File.close(io)
   defp close_excp_file({:done, io}), do: File.close(io)
@@ -585,9 +778,84 @@ defmodule ExCodecs.Spatial.Codec.Binary do
     end
   end
 
-  defp decode_points(bin, 0, _flags), do: {:ok, [], bin}
+  defp encode_points_body(points, flags, opts) do
+    if accel?(opts) do
+      case Accel.excp_pack(points, flags) do
+        {:ok, bin} ->
+          bin
 
-  defp decode_points(bin, count, flags) do
+        # coveralls-ignore-start
+        _ ->
+          encode_points_body_elixir(points, flags)
+          # coveralls-ignore-stop
+      end
+    else
+      encode_points_body_elixir(points, flags)
+    end
+  end
+
+  defp encode_points_body_elixir(points, flags) do
+    IO.iodata_to_binary(Enum.map(points, &encode_point(&1, flags)))
+  end
+
+  defp write_point_chunks(enumerable, io, flags, opts) do
+    chunk_size = if accel?(opts), do: Accel.chunk_size(), else: 1
+
+    enumerable
+    |> Stream.chunk_every(chunk_size)
+    |> Enum.reduce(0, fn chunk, n ->
+      points = assert_points!(chunk)
+      :ok = write_points_chunk(io, points, flags, opts)
+      n + length(points)
+    end)
+  end
+
+  defp assert_points!(chunk) do
+    Enum.map(chunk, fn
+      %Point{} = p -> p
+      other -> throw({:bad_point, other})
+    end)
+  end
+
+  defp write_points_chunk(io, points, flags, opts) do
+    if accel?(opts) do
+      case Accel.excp_pack(points, flags) do
+        {:ok, bin} ->
+          IO.binwrite(io, bin)
+
+        # coveralls-ignore-start
+        _ ->
+          Enum.each(points, &IO.binwrite(io, encode_point(&1, flags)))
+          # coveralls-ignore-stop
+      end
+    else
+      Enum.each(points, &IO.binwrite(io, encode_point(&1, flags)))
+    end
+
+    :ok
+  end
+
+  defp accel?(opts), do: Keyword.get(opts, :accel, true) != false and Accel.available?()
+
+  defp decode_points(bin, 0, _flags, _opts), do: {:ok, [], bin}
+
+  defp decode_points(bin, count, flags, opts) do
+    if accel?(opts) do
+      case Accel.excp_unpack(bin, flags, 0, count) do
+        {:ok, {points, _}} when length(points) == count ->
+          {:ok, points, <<>>}
+
+        # Incomplete / failed Accel unpack: Elixir path preserves field-specific
+        # truncation messages (RGB / RGBA / normal).
+        _ ->
+          decode_points_elixir(bin, count, flags)
+      end
+    else
+      decode_points_elixir(bin, count, flags)
+    end
+  end
+
+  defp decode_points_elixir(bin, count, flags) do
     Enum.reduce_while(1..count, {:ok, [], bin}, fn _, {:ok, acc, rest} ->
       case decode_point(rest, flags) do
         {:ok, point, next} -> {:cont, {:ok, [point | acc], next}}

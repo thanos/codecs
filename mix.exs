@@ -1,7 +1,7 @@
 defmodule ExCodecs.MixProject do
   use Mix.Project
 
-  @version "0.2.2"
+  @version "0.2.3"
   @source_url "https://github.com/thanos/codecs"
 
   def project do
@@ -20,8 +20,13 @@ defmodule ExCodecs.MixProject do
         tool: ExCoveralls,
         ignore_modules: [ExCodecs.Native],
         threshold: 95
-      ],
-      preferred_cli_env: [
+      ]
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
         coveralls: :test,
         "coveralls.detail": :test,
         "coveralls.github": :test,

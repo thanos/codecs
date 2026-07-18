@@ -1,8 +1,9 @@
 # Spatial wire formats (v0.2.0 freeze)
 
-This document freezes the on-wire layouts used by `ExCodecs.Spatial` in **v0.2.0**.
-A future Rust backend (v0.2.1) must produce **byte-compatible** output for these
-formats. There is **no CRC / checksum** in v1; integrity is the caller's responsibility.
+This document freezes the on-wire layouts used by `ExCodecs.Spatial` since
+**v0.2.0**. The Rust spatial acceleration shipped in **v0.2.3** must produce
+**byte-compatible** output for these formats (verified by property tests).
+There is **no CRC / checksum** in v1; integrity is the caller's responsibility.
 
 Attribute keys on points are **strings** after construction / decode. Prefer string
 keys when building clouds for cross-backend compatibility.
@@ -45,13 +46,16 @@ normal `{0,0,0}`). Mixed optional fields therefore round-trip with defaults fill
 - **EXCP / GSPL / PLY + `source: :file`** (or `:auto` path detection): header
   then one record/vertex at a time from disk (bounded memory). Binary PLY uses
   a fixed property stride; ASCII PLY reads lines.
-- In-memory binaries still **materialize** through `decode/2`, then enumerate.
+- In-memory binaries use **chunked Rust unpack** when the spatial NIF is
+  loaded; otherwise they materialize through `decode/2`.
 - `stream_encode` still collects the enumerable, then encodes once.
 - `encode_to_file/3` with an explicit `:schema` streams EXCP/GSPL to disk
-  (placeholder header + seek-back count). Without `:schema`, encode then write.
+  (placeholder header + seek-back count; chunked Rust pack when available).
+  Without `:schema`, encode then write.
+- Pass `accel: false` on encode/decode/stream helpers to force pure Elixir.
 
 Prefer explicit `source: :file` or `source: :binary` when the argument is
-ambiguous. A future Rust backend may memory-map large in-memory binaries.
+ambiguous. File streams prefer mmap + DirtyCpu unpack when Accel is available.
 
 `:auto` treats a binary as a path only when it looks path-like (under 4 KiB, no
 `ply`/`EXCP`/`GSPL` magic, and contains `/` or `\` or ends with `.ply`/`.excp`/
