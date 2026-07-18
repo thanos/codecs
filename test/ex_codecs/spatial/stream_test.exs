@@ -1,6 +1,8 @@
 defmodule ExCodecs.Spatial.StreamTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Spatial.Stream
+
   alias ExCodecs.Spatial
   alias ExCodecs.Spatial.{Gaussian, Point, PointCloud}
 

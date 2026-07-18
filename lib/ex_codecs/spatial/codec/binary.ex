@@ -13,11 +13,12 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   Each record always has `x,y,z` as `f32`. Optional `rgb`/`rgba` as `u8`
   and normals as `f32` follow according to flags.
 
-  Generic attributes are not stored in this format — use PLY for that.
+  Generic attributes are not stored in this format  -  use PLY for that.
   """
 
   alias ExCodecs.Error
   alias ExCodecs.Spatial.Accel
+  alias ExCodecs.Spatial.Codec.StreamSource
   alias ExCodecs.Spatial.{Metadata, Point, PointCloud}
 
   @magic "EXCP"
@@ -42,10 +43,10 @@ defmodule ExCodecs.Spatial.Codec.Binary do
 
   ## Arguments
 
-    * `data` (`PointCloud.t()`) — a cloud whose `points` are valid `%Point{}`
+    * `data` (`PointCloud.t()`)  -  a cloud whose `points` are valid `%Point{}`
       structs with numeric coordinates, optional `{r, g, b}` or
       `{r, g, b, a}` color, and optional `{nx, ny, nz}` normal.
-    * `opts` (`keyword()`) — reserved and currently ignored.
+    * `opts` (`keyword()`)  -  reserved and currently ignored.
 
   ## Returns
 
@@ -74,19 +75,22 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   def encode(data, opts \\ [])
 
   def encode(%PointCloud{points: points}, opts) do
-    has_color? = Enum.any?(points, &Point.colored?/1)
-    has_alpha? = Enum.any?(points, fn p -> match?({_, _, _, _}, p.color) end)
-    has_normal? = Enum.any?(points, &Point.has_normal?/1)
+    {flags, count} =
+      Enum.reduce(points, {0, 0}, fn p, {f, n} ->
+        f =
+          case p.color do
+            {_, _, _, _} -> Bitwise.bor(f, Bitwise.bor(@flag_color, @flag_alpha))
+            {_, _, _} -> Bitwise.bor(f, @flag_color)
+            nil -> f
+          end
 
-    flags =
-      0
-      |> then(fn f -> if has_color?, do: Bitwise.bor(f, @flag_color), else: f end)
-      |> then(fn f -> if has_alpha?, do: Bitwise.bor(f, @flag_alpha), else: f end)
-      |> then(fn f -> if has_normal?, do: Bitwise.bor(f, @flag_normal), else: f end)
+        f = if Point.has_normal?(p), do: Bitwise.bor(f, @flag_normal), else: f
+        {f, n + 1}
+      end)
 
     header =
       <<@magic::binary, @version::little-unsigned-16, flags::little-unsigned-16,
-        length(points)::little-unsigned-64>>
+        count::little-unsigned-64>>
 
     body = encode_points_body(points, flags, opts)
     {:ok, header <> body}
@@ -108,9 +112,9 @@ defmodule ExCodecs.Spatial.Codec.Binary do
 
   ## Arguments
 
-    * `enumerable` (`Enumerable.t()`) — `%Point{}` elements.
-    * `path` (`Path.t()`) — destination file path.
-    * `opts` (`keyword()`) — requires `:schema`, a list such as `[]`,
+    * `enumerable` (`Enumerable.t()`)  -  `%Point{}` elements.
+    * `path` (`Path.t()`)  -  destination file path.
+    * `opts` (`keyword()`)  -  requires `:schema`, a list such as `[]`,
       `[:color]`, `[:color, :alpha]`, `[:normal]`, or `[:color, :normal]`.
       Map form `%{color: true, alpha: false, normal: true}` is also accepted.
       `:alpha` implies color bytes (RGBA).
@@ -145,11 +149,15 @@ defmodule ExCodecs.Spatial.Codec.Binary do
     with {:ok, flags} <- fetch_schema_flags(opts),
          {:ok, io} <- open_write(path) do
       try do
-        :ok = IO.binwrite(io, excp_header(flags, 0))
-        count = write_point_chunks(enumerable, io, flags, opts)
-        {:ok, 0} = :file.position(io, 0)
-        :ok = IO.binwrite(io, excp_header(flags, count))
-        :ok
+        with :ok <- binwrite(io, excp_header(flags, 0)),
+             {:ok, count} <- write_point_chunks(enumerable, io, flags, opts),
+             {:ok, _} <- :file.position(io, 0),
+             :ok <- binwrite(io, excp_header(flags, count)) do
+          :ok
+        else
+          {:error, %Error{}} = err -> err
+          {:error, reason} -> io_error(reason)
+        end
       catch
         {:bad_point, other} ->
           {:error,
@@ -247,8 +255,8 @@ defmodule ExCodecs.Spatial.Codec.Binary do
 
   ## Arguments
 
-    * `data` (`binary()`) — a complete EXCP payload.
-    * `opts` (`keyword()`) — reserved and currently ignored.
+    * `data` (`binary()`)  -  a complete EXCP payload.
+    * `opts` (`keyword()`)  -  reserved and currently ignored.
 
   ## Returns
 
@@ -287,10 +295,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
          message: "Unsupported binary point format version #{version}"
        )}
     else
-      with {:ok, points, _} <- decode_points(rest, count, flags, opts) do
-        meta = Metadata.new(entries: %{"format" => "excp", "version" => version})
-        {:ok, PointCloud.new(points, metadata: meta)}
-      end
+      decode_v1(flags, count, rest, version, opts)
     end
   end
 
@@ -302,25 +307,44 @@ defmodule ExCodecs.Spatial.Codec.Binary do
      )}
   end
 
+  defp decode_v1(flags, count, rest, version, opts) do
+    known_flags = Bitwise.bor(@flag_color, Bitwise.bor(@flag_alpha, @flag_normal))
+
+    if Bitwise.band(flags, Bitwise.bnot(known_flags)) != 0 do
+      {:error,
+       Error.new(:invalid_data,
+         codec: :spatial_binary,
+         message: "Unknown EXCP flag bits: 0x#{Integer.to_string(flags, 16)}"
+       )}
+    else
+      with {:ok, points, _} <- decode_points(rest, count, flags, opts) do
+        meta = Metadata.new(entries: %{"format" => "excp", "version" => version})
+        {:ok, PointCloud.new(points, metadata: meta)}
+      end
+    end
+  end
+
   @doc """
   Returns an enumerable over points in an EXCP payload or file.
 
   ## Streaming behavior
 
     * `source: :file` (or `:auto` path detection): header then chunked
-      records — Rust mmap + DirtyCpu unpack when available, otherwise
+      records  -  Rust mmap + DirtyCpu unpack when available, otherwise
       `IO.binread/2` per record.
     * `source: :binary`: chunked Rust unpack when available; otherwise
       materializes through `decode/2`.
 
-  Prefer `source: :file` for multi‑MB / multi‑GB `.excp` paths.
+  Prefer `source: :file` for multi-MB / multi-GB `.excp` paths.
   Pass `accel: false` to force the pure-Elixir path.
 
   ## Arguments
 
-    * `source` (`Path.t() | binary()`) — filesystem path or complete EXCP
+    * `source` (`Path.t() | binary()`)  -  filesystem path or complete EXCP
       payload. Both are binaries, so `:source` controls resolution.
-    * `opts` (`keyword()`) — `:source` may be `:auto` (default), `:file`, or
+    * `opts` (`keyword()`)  -  `:source` may be `:binary` (default), `:file`, or
+      `:auto`. Prefer `:file` for paths and `:binary` for payloads; `:auto` is
+      opt-in path sniffing (see `docs/spatial_formats.md`).
       `:binary`.
 
   ## Returns
@@ -328,8 +352,8 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   An `Enumerable.t()` yielding `%Point{}` values. Failures are delayed until
   enumeration as exactly one `{:error, %ExCodecs.Error{}}`:
 
-    * `reason: :io_error` — the file cannot be opened or read
-    * `reason: :invalid_data` — bad magic/version, truncated header, or a
+    * `reason: :io_error`  -  the file cannot be opened or read
+    * `reason: :invalid_data`  -  bad magic/version, truncated header, or a
       truncated record mid-stream (`codec: :spatial_binary`)
 
   ## Raises / exceptions
@@ -348,7 +372,7 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   def stream_decode(source, opts \\ [])
 
   def stream_decode(data, opts) when is_binary(data) do
-    case resolve_source(data, opts) do
+    case StreamSource.resolve(data, opts, :spatial_binary, &path_like?/1) do
       {:ok, :binary, bin} ->
         stream_from_binary(bin, opts)
 
@@ -358,6 +382,9 @@ defmodule ExCodecs.Spatial.Codec.Binary do
           &next_excp_item/1,
           &close_excp_file/1
         )
+
+      {:error, error} ->
+        error_stream(error)
     end
   end
 
@@ -401,27 +428,8 @@ defmodule ExCodecs.Spatial.Codec.Binary do
     )
   end
 
-  defp resolve_source(bin, opts) do
-    case Keyword.get(opts, :source, :auto) do
-      :binary ->
-        {:ok, :binary, bin}
-
-      :file ->
-        {:ok, :file, bin}
-
-      :auto ->
-        if path_like?(bin) and File.regular?(bin) do
-          {:ok, :file, bin}
-        else
-          {:ok, :binary, bin}
-        end
-    end
-  end
-
   defp path_like?(bin) do
-    byte_size(bin) < 4096 and not String.starts_with?(bin, @magic) and
-      (String.contains?(bin, "/") or String.contains?(bin, "\\") or
-         String.ends_with?(bin, [".excp", ".bin"]))
+    StreamSource.path_like?(bin, &String.starts_with?(&1, @magic), [".excp", ".bin"])
   end
 
   defp open_excp_file(path, opts) do
@@ -765,18 +773,20 @@ defmodule ExCodecs.Spatial.Codec.Binary do
   defp normalize_rgb(color) do
     case color do
       nil -> {0, 0, 0}
-      {r, g, b} -> {trunc(r), trunc(g), trunc(b)}
-      {r, g, b, _a} -> {trunc(r), trunc(g), trunc(b)}
+      {r, g, b} -> {clamp_byte(r), clamp_byte(g), clamp_byte(b)}
+      {r, g, b, _a} -> {clamp_byte(r), clamp_byte(g), clamp_byte(b)}
     end
   end
 
   defp normalize_rgba(color) do
     case color do
       nil -> {0, 0, 0, 255}
-      {r, g, b} -> {trunc(r), trunc(g), trunc(b), 255}
-      {r, g, b, a} -> {trunc(r), trunc(g), trunc(b), trunc(a)}
+      {r, g, b} -> {clamp_byte(r), clamp_byte(g), clamp_byte(b), 255}
+      {r, g, b, a} -> {clamp_byte(r), clamp_byte(g), clamp_byte(b), clamp_byte(a)}
     end
   end
+
+  defp clamp_byte(v), do: min(max(trunc(v), 0), 255)
 
   defp encode_points_body(points, flags, opts) do
     if accel?(opts) do
@@ -803,10 +813,13 @@ defmodule ExCodecs.Spatial.Codec.Binary do
 
     enumerable
     |> Stream.chunk_every(chunk_size)
-    |> Enum.reduce(0, fn chunk, n ->
+    |> Enum.reduce_while({:ok, 0}, fn chunk, {:ok, n} ->
       points = assert_points!(chunk)
-      :ok = write_points_chunk(io, points, flags, opts)
-      n + length(points)
+
+      case write_points_chunk(io, points, flags, opts) do
+        :ok -> {:cont, {:ok, n + length(points)}}
+        {:error, _} = err -> {:halt, err}
+      end
     end)
   end
 
@@ -821,37 +834,66 @@ defmodule ExCodecs.Spatial.Codec.Binary do
     if accel?(opts) do
       case Accel.excp_pack(points, flags) do
         {:ok, bin} ->
-          IO.binwrite(io, bin)
+          binwrite(io, bin)
 
         # coveralls-ignore-start
         _ ->
-          Enum.each(points, &IO.binwrite(io, encode_point(&1, flags)))
+          write_points_elixir(io, points, flags)
           # coveralls-ignore-stop
       end
     else
-      Enum.each(points, &IO.binwrite(io, encode_point(&1, flags)))
+      write_points_elixir(io, points, flags)
     end
-
-    :ok
   end
 
-  defp accel?(opts), do: Keyword.get(opts, :accel, true) != false and Accel.available?()
+  defp write_points_elixir(io, points, flags) do
+    Enum.reduce_while(points, :ok, fn p, :ok ->
+      case binwrite(io, encode_point(p, flags)) do
+        :ok -> {:cont, :ok}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  defp binwrite(io, data) do
+    case :file.write(io, data) do
+      :ok -> :ok
+      {:error, reason} -> io_error(reason)
+    end
+  end
+
+  defp accel?(opts), do: StreamSource.accel?(opts)
 
   defp decode_points(bin, 0, _flags, _opts), do: {:ok, [], bin}
 
   defp decode_points(bin, count, flags, opts) do
     if accel?(opts) do
-      case Accel.excp_unpack(bin, flags, 0, count) do
-        {:ok, {points, _}} when length(points) == count ->
-          {:ok, points, <<>>}
-
-        # Incomplete / failed Accel unpack: Elixir path preserves field-specific
-        # truncation messages (RGB / RGBA / normal).
-        _ ->
-          decode_points_elixir(bin, count, flags)
-      end
+      decode_points_accel(bin, count, flags, 0, 0, [])
     else
       decode_points_elixir(bin, count, flags)
+    end
+  end
+
+  defp decode_points_accel(_bin, count, _flags, _offset, i, acc) when i >= count do
+    {:ok, Enum.reverse(acc), <<>>}
+  end
+
+  defp decode_points_accel(bin, count, flags, offset, i, acc) do
+    want = min(Accel.chunk_size(), count - i)
+
+    case Accel.excp_unpack(bin, flags, offset, want) do
+      {:ok, {points, next}} when length(points) == want ->
+        decode_points_accel(bin, count, flags, next, i + want, Enum.reverse(points, acc))
+
+      # Incomplete / failed Accel unpack: Elixir path preserves field-specific
+      # truncation messages (RGB / RGBA / normal), resuming at remaining bytes.
+      _ ->
+        rest = binary_part(bin, offset, byte_size(bin) - offset)
+
+        case decode_points_elixir(rest, count - i, flags) do
+          {:ok, points, leftover} -> {:ok, Enum.reverse(acc, points), leftover}
+          {:error, _} = err -> err
+        end
     end
   end
 

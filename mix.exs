@@ -107,9 +107,27 @@ defmodule ExCodecs.MixProject do
       source_url: @source_url,
       source_ref: "v#{@version}",
       extras:
-        Path.wildcard("guides/**/*.md") ++
-          Path.wildcard("livebooks/**/*.livemd") ++
-          ["docs/spatial_formats.md"],
+        [
+          "guides/benchmarking_methodology.md",
+          "guides/choosing_compression_codec.md",
+          "guides/codec_fundamentals.md",
+          "guides/compression_fundamentals.md",
+          "guides/native_architecture.md",
+          "guides/runtime_codec_discovery.md",
+          "guides/understanding_blosc2.md",
+          "guides/understanding_bzip2.md",
+          "guides/understanding_lz4.md",
+          "guides/understanding_snappy.md",
+          "guides/understanding_spatial_codecs.md",
+          "guides/understanding_zstd.md",
+          "livebooks/01_introduction.livemd",
+          "livebooks/02_compression_fundamentals.livemd",
+          "livebooks/03_codec_comparison.livemd",
+          "livebooks/04_building_storage_systems.livemd",
+          "livebooks/05_zarr_style_workloads.livemd",
+          "livebooks/06_spatial_codecs.livemd",
+          "docs/spatial_formats.md"
+        ],
       groups_for_extras: [
         Guides: ~r"guides/",
         Livebooks: ~r"livebooks/",

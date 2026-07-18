@@ -63,6 +63,7 @@ defmodule ExCodecs.Compression.Bzip2 do
         version: "bzip2-0.6/libbz2-rs"
       }
   """
+  @impl true
   def __codec_info__ do
     %ExCodecs.Codec{
       name: :bzip2,
@@ -136,14 +137,18 @@ defmodule ExCodecs.Compression.Bzip2 do
   ## Arguments
 
     * `data` (`binary()`) — a complete Bzip2 stream
-    * `opts` (`term()`) — ignored by this direct function; callers using the
-      codec behaviour or registry API should pass the keyword list `[]`
+    * `opts` (`keyword()`) — optional `:max_output_size` (positive integer
+      bytes, default 256 MiB)
 
   ## Returns
 
     * `{:ok, decompressed :: binary()}` on success
     * `{:error, %ExCodecs.Error{reason: :invalid_data}}` when `data` is not a
-      binary or the NIF raises an argument error
+      binary, `opts` is not a list, or the NIF raises an argument error
+    * `{:error, %ExCodecs.Error{reason: :invalid_options}}` when
+      `:max_output_size` is not a positive integer
+    * `{:error, %ExCodecs.Error{reason: :output_limit_exceeded}}` when the
+      decompressed size would exceed `:max_output_size`
     * `{:error, %ExCodecs.Error{reason: :decompression_failed}}` when `data`
       is corrupt, truncated, or not a Bzip2 stream
     * `{:error, %ExCodecs.Error{reason: :nif_not_loaded}}` when the native
@@ -151,10 +156,9 @@ defmodule ExCodecs.Compression.Bzip2 do
 
   ## Raises / Exceptions
 
-  Data guard failures and `ErlangError`/`ArgumentError` exceptions from the NIF
-  call are converted to error tuples. Because `opts` is ignored, this direct
-  function also accepts non-list option terms. Unexpected exception classes
-  may propagate.
+  Guard failures and `ErlangError`/`ArgumentError` exceptions from the NIF
+  call are converted to error tuples. Unexpected exception classes may
+  propagate.
 
   ## Examples
 

@@ -166,7 +166,10 @@ end
 ### Using the Compressed Store
 
 ```elixir
-{:ok, _pid} = CompressedStore.start_link(codec: :zstd, opts: [level: 3])
+case CompressedStore.start_link(codec: :zstd, opts: [level: 3]) do
+  {:ok, _pid} -> :ok
+  {:error, {:already_started, _pid}} -> :ok
+end
 
 CompressedStore.put(:doc1, String.duplicate("Hello, World! ", 1000))
 CompressedStore.put(:doc2, :crypto.strong_rand_bytes(4096) |> Base.encode64())
@@ -274,7 +277,10 @@ end
 ### Using the Multi-Codec Store
 
 ```elixir
-{:ok, _pid} = MultiCodecStore.start_link()
+case MultiCodecStore.start_link() do
+  {:ok, _pid} -> :ok
+  {:error, {:already_started, _pid}} -> :ok
+end
 
 datasets = %{
   repetitive: String.duplicate("abcabcabc", 5000),
@@ -490,6 +496,24 @@ end
 ```
 
 ```elixir
+# Exercise the error branches with real failures.
+results =
+  [
+    {:ok, _} = ExCodecs.encode(:zstd, "ok"),
+    {:error, %ExCodecs.Error{reason: :invalid_options}} =
+      ExCodecs.encode(:zstd, "x", level: 99),
+    {:error, %ExCodecs.Error{reason: :decompression_failed}} =
+      ExCodecs.decode(:zstd, "not a zstd frame"),
+    {:error, %ExCodecs.Error{reason: :unsupported_codec}} =
+      ExCodecs.encode(:nonexistent, "x")
+  ]
+
+for {tag, {status, _} = result} <- Enum.zip([:ok, :bad_level, :bad_frame, :bad_codec], results) do
+  IO.puts("#{String.pad_trailing("#{tag}", 12)} -> #{inspect(result)}")
+end
+```
+
+```elixir
 # Bound decompression for untrusted payloads (default is 256 MiB).
 # Classic bomb shape: 64 KiB of zeros → tiny compressed input.
 bomb_raw = :binary.copy(<<0>>, 65_536)
@@ -557,7 +581,7 @@ defmodule CompressWithFallback do
     |> Enum.reduce_while({:error, :no_codec_available}, fn codec, _acc ->
       case ExCodecs.encode(codec, data) do
         {:ok, compressed} -> {:halt, {:ok, {codec, compressed}}}
-        {:error, _} -> {:cont, {:error, :codec_failed}}
+        {:error, err} -> {:cont, {:error, {codec, err.reason}}}
       end
     end)
   end
@@ -589,6 +613,7 @@ defmodule CompressedETS do
   ETS-backed storage with transparent compression.
   """
   def new(name \\ :compressed_store) do
+    if :ets.whereis(name) != :undefined, do: :ets.delete(name)
     :ets.new(name, [:set, :public, :named_table])
     name
   end
@@ -704,7 +729,14 @@ defmodule CompressedFileIO do
   end
 
   defp bin_to_codec_atom(bin) do
-    bin |> String.trim_trailing() |> String.to_atom()
+    case bin |> String.trim_trailing() do
+      "zstd" -> :zstd
+      "lz4" -> :lz4
+      "snappy" -> :snappy
+      "bzip2" -> :bzip2
+      "blosc2" -> :blosc2
+      other -> {:error, {:unknown_codec, other}}
+    end
   end
 end
 ```

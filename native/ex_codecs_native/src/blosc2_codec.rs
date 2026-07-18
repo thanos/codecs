@@ -56,7 +56,9 @@ pub fn blosc2_compress<'a>(
     };
     let filter = filter_from_shuffle(shuffle.clamp(0, 2) as u8);
 
-    if data.len() > i32::MAX as usize {
+    let overhead = BLOSC2_MAX_OVERHEAD as usize;
+    let max_src = (i32::MAX as usize).saturating_sub(overhead);
+    if data.len() > max_src {
         return err(env, atoms::invalid_data());
     }
 
@@ -76,8 +78,14 @@ pub fn blosc2_compress<'a>(
     };
 
     let src = data.as_slice();
-    let srcsize = src.len() as i32;
-    let mut destsize = (src.len() + BLOSC2_MAX_OVERHEAD) as i32;
+    let Ok(srcsize) = i32::try_from(src.len()) else {
+        blosc2_free_ctx(ctx);
+        return err(env, atoms::invalid_data());
+    };
+    let Ok(mut destsize) = i32::try_from(src.len() + overhead) else {
+        blosc2_free_ctx(ctx);
+        return err(env, atoms::invalid_data());
+    };
     if destsize < BLOSC2_MAX_OVERHEAD as i32 {
         destsize = BLOSC2_MAX_OVERHEAD as i32;
     }
@@ -91,7 +99,13 @@ pub fn blosc2_compress<'a>(
     }
     if n == 0 {
         // Destination too small — retry with a larger buffer.
-        let destsize2 = ((src.len() * 2) + BLOSC2_MAX_OVERHEAD).max(BLOSC2_MAX_OVERHEAD) as i32;
+        let Some(destsize2_usize) = src.len().checked_mul(2).map(|n| n + overhead) else {
+            return err(env, atoms::compression_failed());
+        };
+        let destsize2_usize = destsize2_usize.max(overhead);
+        let Ok(destsize2) = i32::try_from(destsize2_usize) else {
+            return err(env, atoms::compression_failed());
+        };
         let mut dest2 = vec![0u8; destsize2 as usize];
         let cparams2 = CParams {
             compcode,

@@ -15,10 +15,13 @@ defmodule ExCodecs.Codec do
     * `interface` (`:binary | :spatial`) — public API shape used by the entry
     * `module` (`module() | nil`) — implementation module, or `nil` when the
       codec is known but unavailable
-    * `native?` (`boolean()`) — whether the implementation uses a NIF
-    * `streaming?` (`boolean()`) — whether an incremental API is available
-    * `configurable?` (`boolean()`) — whether the codec accepts meaningful options
+    * `native?` (`boolean() | nil`) — whether the implementation uses a NIF
+    * `streaming?` (`boolean() | nil`) — whether an incremental API is available
+    * `configurable?` (`boolean() | nil`) — whether the codec accepts meaningful options
     * `version` (`String.t() | nil`) — backend version, if reported
+
+  Boolean capability fields and `version` may be `nil` on a bare `%ExCodecs.Codec{}`
+  until filled by `c:__codec_info__/0` and/or `ExCodecs.CodecRegistry.register/5`.
 
   For example:
 
@@ -41,6 +44,7 @@ defmodule ExCodecs.Codec do
           # ...
         end
 
+        @impl true
         def __codec_info__ do
           %ExCodecs.Codec{
             name: :zstd,
@@ -64,6 +68,9 @@ defmodule ExCodecs.Codec do
 
   ## Example
 
+  Requires the NIF to be loaded (Zstd is NIF-backed). On a host without the
+  NIF, use a pure-Elixir codec or `ExCodecs.supports?(:zstd)` to gate.
+
       iex> {:ok, result} = ExCodecs.Compression.Zstd.encode("codec input", [])
       iex> is_binary(result)
       true
@@ -79,6 +86,8 @@ defmodule ExCodecs.Codec do
   `:nif_not_loaded`.
 
   ## Example
+
+  Requires the NIF to be loaded.
 
       iex> {:ok, encoded} = ExCodecs.Compression.Zstd.encode("codec input", [])
       iex> ExCodecs.Compression.Zstd.decode(encoded, [])
@@ -193,6 +202,53 @@ defmodule ExCodecs.Codec do
   """
   @callback decode(data :: binary(), opts :: keyword()) :: decode_result()
 
+  @doc """
+  Returns catalog metadata for this codec module.
+
+  Optional. When exported, `ExCodecs.CodecRegistry.register/5` reads capability
+  fields (`native?`, `streaming?`, `configurable?`, `version`) from the returned
+  struct unless the caller overrides them via the `metadata` keyword. Registry
+  arguments always supply `name`, `category`, `interface`, and `module` on the
+  stored entry.
+
+  ## Arguments
+
+  None.
+
+  ## Returns
+
+  An `%ExCodecs.Codec{}` whose capability fields describe this implementation.
+  Callers may leave `name`/`category`/`interface` unset when the registry fills
+  those from `register/5` arguments.
+
+  ## Raises
+
+  Implementations should not raise for a normal metadata return. Any exception
+  raised here propagates through registration.
+
+  ## Implementation example
+
+      defmodule ExCodecs.Compression.Zstd do
+        @behaviour ExCodecs.Codec
+
+        @impl true
+        def __codec_info__ do
+          %ExCodecs.Codec{
+            name: :zstd,
+            category: :compression,
+            module: __MODULE__,
+            native?: true,
+            streaming?: false,
+            configurable?: true,
+            version: "structured-zstd-0.0.48"
+          }
+        end
+      end
+  """
+  @callback __codec_info__() :: t()
+
+  @optional_callbacks __codec_info__: 0
+
   @typedoc """
   Metadata for one shared codec-catalog entry.
 
@@ -205,10 +261,15 @@ defmodule ExCodecs.Codec do
     * `interface` — `:binary` for the top-level registry API or `:spatial` for
       `ExCodecs.Spatial`
     * `module` — callback implementation, or `nil` for an unavailable codec
-    * `native?` — indicates NIF-backed operation
-    * `streaming?` — indicates incremental processing support
-    * `configurable?` — indicates codec-specific option support
+    * `native?` — indicates NIF-backed operation, or `nil` until known
+    * `streaming?` — indicates incremental processing support, or `nil` until known
+    * `configurable?` — indicates codec-specific option support, or `nil` until known
     * `version` — backend version string, or `nil` if unknown
+
+  Boolean capability fields default to `nil` on `%ExCodecs.Codec{}` and are
+  typically filled by `c:__codec_info__/0` and/or registry registration. After
+  a successful `register/5` or `register_unavailable/3` they are usually
+  concrete booleans; `nil` means unknown / not yet filled.
 
   ## Example
 
@@ -222,9 +283,9 @@ defmodule ExCodecs.Codec do
           category: atom(),
           interface: :binary | :spatial,
           module: module() | nil,
-          native?: boolean(),
-          streaming?: boolean(),
-          configurable?: boolean(),
+          native?: boolean() | nil,
+          streaming?: boolean() | nil,
+          configurable?: boolean() | nil,
           version: String.t() | nil
         }
 
@@ -239,6 +300,9 @@ defmodule ExCodecs.Codec do
 
   @doc """
   Returns whether `module` exports `encode/2` and `decode/2`.
+
+  Despite the name, this checks **interface conformance** (the module
+  implements the codec callbacks), not runtime data validation.
 
   ## Arguments
 

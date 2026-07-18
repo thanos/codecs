@@ -344,6 +344,6 @@ In most deployments, all codecs are registered once at startup and never change.
 
 - The registry uses ETS for fast, lock-free lookups without process bottlenecks.
 - Codecs are registered at startup; unavailable ones (NIF not loaded) are marked but not removed.
-- `supports?/1` and `available_codecs/0` enable robust runtime checks.
+- `supports?/1` and `available_codecs/0` enable runtime checks.
 - Custom codecs can be registered by implementing the `ExCodecs.Codec` behaviour and calling `CodecRegistry.register/3`.
 - The distinction between "known" and "available" codecs enables graceful degradation when native libraries are missing.

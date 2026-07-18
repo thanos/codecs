@@ -53,9 +53,9 @@ defmodule ExCodecs.Spatial.Codec.BinaryTest do
     assert length(points) == 2
     assert hd(points).color == {10, 20, 30}
 
-    # :auto path detection
+    # :auto path detection (opt-in; default :source is :binary)
     assert [%Point{}, %Point{}] =
-             Binary.stream_decode(path) |> Enum.to_list()
+             Binary.stream_decode(path, source: :auto) |> Enum.to_list()
   end
 
   test "stream_decode from truncated file yields invalid_data" do

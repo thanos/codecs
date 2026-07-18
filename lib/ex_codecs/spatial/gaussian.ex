@@ -118,15 +118,33 @@ defmodule ExCodecs.Spatial.Gaussian do
   """
   @spec new({number(), number(), number()}, keyword()) :: t()
   def new({x, y, z}, opts \\ []) when is_number(x) and is_number(y) and is_number(z) do
+    sh = Keyword.get(opts, :sh)
+    :ok = validate_sh(sh)
+
     %__MODULE__{
       position: {x * 1.0, y * 1.0, z * 1.0},
       rotation: float4(Keyword.get(opts, :rotation, {1.0, 0.0, 0.0, 0.0})),
       scale: float3(Keyword.get(opts, :scale, {1.0, 1.0, 1.0})),
       opacity: Keyword.get(opts, :opacity, 1.0) * 1.0,
       color: float3(Keyword.get(opts, :color, {0.5, 0.5, 0.5})),
-      sh: Keyword.get(opts, :sh),
+      sh: sh,
       metadata: Keyword.get(opts, :metadata, %{})
     }
+  end
+
+  defp validate_sh(nil), do: :ok
+  defp validate_sh([]), do: :ok
+
+  defp validate_sh([[_ | _] | _] = groups) do
+    if Enum.all?(groups, &is_list/1) do
+      :ok
+    else
+      raise ArgumentError, "sh must be a list of lists of numbers, got: #{inspect(groups)}"
+    end
+  end
+
+  defp validate_sh(other) do
+    raise ArgumentError, "sh must be nil, [], or a list of lists of numbers, got: #{inspect(other)}"
   end
 
   defp float3({a, b, c}) when is_number(a) and is_number(b) and is_number(c) do

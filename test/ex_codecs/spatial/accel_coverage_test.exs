@@ -5,7 +5,7 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
   alias ExCodecs.Spatial.Codec.{Binary, Gsplat, PLY}
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Point, PointCloud}
 
-  unless ExCodecs.Spatial.Accel.available?(),
+  unless Accel.available?(),
     do: @moduletag(skip: "spatial Accel NIF not loaded")
 
   defp tmp(ext) do
@@ -19,8 +19,17 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
     test "chunk_size, ply_type_tag, pack/unpack, mmap, and append_file" do
       assert Accel.chunk_size() == 4096
 
-      for t <- [:char, :uchar, :short, :ushort, :int, :uint, :float, :double] do
-        assert is_integer(Accel.ply_type_tag(t))
+      for {t, tag} <- [
+            char: 1,
+            uchar: 2,
+            short: 3,
+            ushort: 4,
+            int: 5,
+            uint: 6,
+            float: 7,
+            double: 8
+          ] do
+        assert Accel.ply_type_tag(t) == tag
       end
 
       points = [
@@ -56,7 +65,7 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
       assert_in_delta z, 3.0, 1.0e-5
 
       assert {:ok, {[[_, _, _]], _}} =
-               Accel.ply_binary_unpack(ply_body, [:float, :float, :float], true, 0, 1)
+               Accel.ply_binary_unpack(ply_body, [:float, :float, :float], :little, 0, 1)
 
       path = tmp(".excp")
       on_exit(fn -> File.rm(path) end)
@@ -122,7 +131,7 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
       assert {:error, _} = Accel.gspl_pack([bad_g], 0)
     end
 
-    test "row helpers cover nil SH and nested SH" do
+    test "row helpers cover nil SH, nested SH, and flat SH (drops 3 DC)" do
       p = Point.new(1, 2, 3, color: {1, 2, 3, 4}, normal: nil)
       assert {1.0, 2.0, 3.0, {1, 2, 3, 4}, nil} = Accel.point_to_row(p)
       assert %Point{} = Accel.row_to_point(Accel.point_to_row(p))
@@ -134,6 +143,16 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
       g1 = Gaussian.new({0, 0, 0}, color: {0.1, 0.2, 0.3}, sh: [[0.1, 0.2, 0.3], [1.0, 2.0, 3.0]])
       row1 = Accel.gaussian_to_row(g1, 3)
       assert %Gaussian{} = Accel.row_to_gaussian(row1, 3)
+
+      g_flat =
+        struct(Gaussian,
+          position: {0.0, 0.0, 0.0},
+          color: {0.1, 0.2, 0.3},
+          sh: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        )
+
+      {_, _, _, _, _, flat_rest} = Accel.gaussian_to_row(g_flat, 3)
+      assert flat_rest == [0.4, 0.5, 0.6]
     end
   end
 
@@ -305,13 +324,31 @@ defmodule ExCodecs.Spatial.AccelCoverageTest do
           )
         ])
 
-      # Empty SH list hits sh_rest_values/1 catch-all list clause (non-empty lists
-      # match the [_dc | rest] head clause first).
+      # Empty SH list hits sh_rest_values/1 empty-list clause.
       assert {:ok, _} =
                Gsplat.encode(
                  GaussianCloud.new([struct(Gaussian, position: {0.0, 0.0, 0.0}, sh: [])]),
                  accel: false
                )
+
+      # Flat SH drops the first 3 DC floats (not just the head element).
+      flat =
+        GaussianCloud.new([
+          struct(Gaussian,
+            position: {0.0, 0.0, 0.0},
+            color: {0.1, 0.2, 0.3},
+            sh: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+          )
+        ])
+
+      assert {:ok, flat_bin} = Gsplat.encode(flat, accel: false)
+      # 18-byte header + 14 f32 base + 3 f32 SH rest
+      assert byte_size(flat_bin) == 18 + 56 + 12
+      assert {:ok, flat_decoded} = Gsplat.decode(flat_bin, accel: false)
+      assert [[_, _, _], rest] = hd(flat_decoded.gaussians).sh
+      assert_in_delta hd(rest), 0.4, 1.0e-6
+      assert_in_delta Enum.at(rest, 1), 0.5, 1.0e-6
+      assert_in_delta Enum.at(rest, 2), 0.6, 1.0e-6
 
       assert {:ok, bin} = Gsplat.encode(cloud, accel: false)
       assert {:ok, decoded} = Gsplat.decode(bin, accel: false)

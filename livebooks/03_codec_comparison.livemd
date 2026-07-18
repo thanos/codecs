@@ -270,7 +270,7 @@ size (e.g. bzip2 `block_size` × ~100 KiB; see livebook 02).
 
 ```elixir
 profile_data = %{
-  "Speed King" => %{
+  "Low latency" => %{
     best: [:lz4, :snappy],
     why: "Fastest encode/decode, ideal for hot paths, caching, and real-time systems"
   },
@@ -284,7 +284,7 @@ profile_data = %{
   },
   "Numeric Arrays" => %{
     best: [:blosc2],
-    why: "Shuffle+compress slashes size of typed data. Threaded for large arrays"
+    why: "Shuffle+compress reduces size of typed data (single-threaded NIF)"
   }
 }
 
@@ -308,9 +308,9 @@ end
 
 ## Numeric Arrays
   Codecs: [:blosc2]
-  Shuffle+compress slashes size of typed data. Threaded for large arrays
+  Shuffle+compress reduces size of typed data (single-threaded NIF)
 
-## Speed King
+## Low latency
   Codecs: [:lz4, :snappy]
   Fastest encode/decode, ideal for hot paths, caching, and real-time systems
 
@@ -393,58 +393,18 @@ Suggested options: [cname: :zstd, clevel: 5, shuffle: :byte, typesize: 8]
 
 ## Decision Flowchart
 
-```elixir
-flowchart = """
 When choosing a codec, follow this decision path:
 
 1. Is your data typed numerical arrays?
-   YES → Use Blosc2 (with appropriate shuffle and typesize)
-   NO  → Continue
-
+   - YES → Use Blosc2 (with appropriate shuffle and typesize)
+   - NO → Continue
 2. Is latency critical (hot path, real-time)?
-   YES → Use LZ4 (fastest) or Snappy (low overhead)
-   NO  → Continue
-
+   - YES → Use LZ4 (fastest) or Snappy (low overhead)
+   - NO → Continue
 3. Is storage cost the primary concern?
-   YES → Use Bzip2 (best ratio) or Zstd with high level
-   NO  → Continue
-
-4. Default choice:
-   → Use Zstd (level 3)
-   → Good ratio, fast decompression, configurable
-"""
-
-IO.puts(flowchart)
-```
-
-<!-- livebook:{"output":true} -->
-
-```
-When choosing a codec, follow this decision path:
-
-1. Is your data typed numerical arrays?
-   YES → Use Blosc2 (with appropriate shuffle and typesize)
-   NO  → Continue
-
-2. Is latency critical (hot path, real-time)?
-   YES → Use LZ4 (fastest) or Snappy (low overhead)
-   NO  → Continue
-
-3. Is storage cost the primary concern?
-   YES → Use Bzip2 (best ratio) or Zstd with high level
-   NO  → Continue
-
-4. Default choice:
-   → Use Zstd (level 3)
-   → Good ratio, fast decompression, configurable
-
-```
-
-<!-- livebook:{"output":true} -->
-
-```
-:ok
-```
+   - YES → Use Bzip2 (best ratio) or Zstd with high level
+   - NO → Continue
+4. Default choice: Zstd (level 3) - good ratio, fast decompression, configurable
 
 ## Codec Feature Matrix
 

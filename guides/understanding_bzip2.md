@@ -106,13 +106,8 @@ Larger block sizes allow the BWT to find more distant patterns, improving compre
 - **Block size 3-5**: Moderate ratio. Useful when memory is constrained.
 - **Block size 1-2**: Fastest Bzip2 compression. Only a small improvement over level 9 Zstd in ratio, but much slower.
 
-## Work Factor
-
-Bzip2's upstream `work_factor` parameter (0-250, default 30) governs fallback
-behavior when the BWT encounters pathological data. **ExCodecs does not expose
-it**: only `:block_size` is accepted on `encode/2`, and the NIF uses the
-upstream default. Unknown options such as `work_factor:` are silently ignored,
-so passing it has no effect.
+ExCodecs does not expose upstream Bzip2's `work_factor` parameter; only
+`:block_size` is accepted on encode, and unknown keys are ignored.
 
 ## Bzip2 File Format
 
@@ -136,7 +131,7 @@ A Bzip2 compressed stream has the following structure:
 - Optional run-length encoding
 
 **Stream Footer**:
-- Magic bytes: `0x177245385090` (e ngth pi-related constant)
+- Magic bytes: `0x177245385090` (sqrt(pi) as BCD digits)
 - CRC32 of the blocks
 - Padding bits
 
@@ -232,5 +227,3 @@ Bzip2's advantage is raw compression ratio on text-heavy data. Zstd's advantage 
 4. **Do not use Bzip2 for small data.** The block header overhead and BWT setup cost make Bzip2 inefficient for payloads under 1 KB.
 
 5. **Be aware of memory.** Each concurrent Bzip2 compression at block size 9 uses 9 MB. On the BEAM, plan for this when dispatching many concurrent compressions.
-
-6. **Leave the work factor at default.** Pathological data is rare. If compression seems to hang, increasing the work factor is a diagnostic step, not a production solution.

@@ -1,13 +1,17 @@
 defmodule ExCodecs.Compression.Lz4Test do
   use ExUnit.Case, async: true
 
+  @moduletag :doctest
+  doctest ExCodecs.Compression.Lz4
+
   alias ExCodecs.Compression.Lz4
 
   describe "encode/2" do
-    test "compresses data" do
-      data = :crypto.strong_rand_bytes(1024)
+    test "round-trips compressible data" do
+      data = String.duplicate("ab", 4096)
       assert {:ok, compressed} = Lz4.encode(data, [])
-      assert is_binary(compressed)
+      assert {:ok, ^data} = Lz4.decode(compressed, [])
+      assert byte_size(compressed) < byte_size(data)
     end
 
     test "compresses highly compressible data" do

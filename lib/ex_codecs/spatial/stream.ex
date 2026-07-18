@@ -6,7 +6,7 @@ defmodule ExCodecs.Spatial.Stream do
 
     * **EXCP** (`:spatial_binary`), **GSPL** (`:gsplat`), and **PLY** with
       `source: :file` (or `:auto` path detection) read the header, then one
-      record/vertex at a time from disk — O(header + one record) memory.
+      record/vertex at a time from disk  -  O(header + one record) memory.
       Binary PLY uses a fixed stride; ASCII PLY reads lines.
     * In-memory binaries still **materialize** through `decode/2`, then yield.
       A future Rust backend may memory-map large binaries.
@@ -15,12 +15,13 @@ defmodule ExCodecs.Spatial.Stream do
       encoding still collects in memory first.
 
   Prefer `source: :file` when the argument is a filesystem path, or
-  `source: :binary` when it is an encoded payload. With `:auto` (default), a
-  binary is treated as a path only when it looks path-like (under 4 KiB, no
-  `ply`/`EXCP`/`GSPL` magic prefix, and contains `/` or `\\` or ends with
-  `.ply`/`.excp`/`.gspl`/`.bin`) **and** `File.regular?/1` is true. A real
-  file without separators/extensions is not auto-opened; a short slash-containing
-  binary that happens to be a regular path may be misread as a file.
+  `source: :binary` when it is an encoded payload (`:binary` is the default).
+  With explicit `:auto`, a short path-like binary that names a regular file is
+  opened; otherwise the argument is treated as payload bytes. Prefer explicit
+  `:file` / `:binary` for untrusted input  -  `:auto` can open local paths.
+  Path-like means under 4 KiB, no `ply`/`EXCP`/`GSPL` magic prefix, and
+  contains `/` or `\\` or ends with `.ply`/`.excp`/`.gspl`/`.bin`, **and**
+  `File.regular?/1` is true.
   """
 
   alias ExCodecs.Error
@@ -35,10 +36,11 @@ defmodule ExCodecs.Spatial.Stream do
 
   ## Arguments
 
-    * `source` (`Path.t() | binary()`) — a path or complete encoded payload.
+    * `source` (`Path.t() | binary()`)  -  a path or complete encoded payload.
       Paths and payloads are both binaries, so `:source` controls resolution.
-    * `opts` (`keyword()`) — requires `:format`: `:ply`,
-      `:spatial_binary`, or `:gsplat`. `:source` may be `:auto` (default),
+    * `opts` (`keyword()`)  -  requires `:format`: `:ply`,
+      `:spatial_binary`, or `:gsplat`. `:source` may be `:binary` (default),
+      `:file`, or `:auto`.
       `:file`, or `:binary`; PLY also accepts `:as`.
 
   ## Returns
@@ -48,10 +50,10 @@ defmodule ExCodecs.Spatial.Stream do
   enumeration and represented by exactly one
   `{:error, %ExCodecs.Error{}}` element:
 
-    * `reason: :invalid_options` — `:format` is absent.
-    * `reason: :unsupported_codec` — `:format` is unknown.
-    * `reason: :io_error` — a selected file cannot be opened or read.
-    * `reason: :invalid_data` — the payload is malformed, unsupported, or
+    * `reason: :invalid_options`  -  `:format` is absent.
+    * `reason: :unsupported_codec`  -  `:format` is unknown.
+    * `reason: :io_error`  -  a selected file cannot be opened or read.
+    * `reason: :invalid_data`  -  the payload is malformed, unsupported, or
       truncated.
 
   ## Raises / exceptions
@@ -113,9 +115,9 @@ defmodule ExCodecs.Spatial.Stream do
 
   ## Arguments
 
-    * `enumerable` (`Enumerable.t()`) — `%Point{}` or `%Gaussian{}` elements.
+    * `enumerable` (`Enumerable.t()`)  -  `%Point{}` or `%Gaussian{}` elements.
       The list should be homogeneous and contain valid struct shapes.
-    * `opts` (`keyword()`) — requires `:format`: `:ply`,
+    * `opts` (`keyword()`)  -  requires `:format`: `:ply`,
       `:spatial_binary`, or `:gsplat`. Remaining keys are forwarded to
       `ExCodecs.Spatial.encode/2`.
 
@@ -200,11 +202,11 @@ defmodule ExCodecs.Spatial.Stream do
 
   ## Arguments
 
-    * `data` (`PointCloud.t() | GaussianCloud.t() | Enumerable.t()`) — a cloud,
+    * `data` (`PointCloud.t() | GaussianCloud.t() | Enumerable.t()`)  -  a cloud,
       or an enumerable of `%Point{}`/`%Gaussian{}` values.
-    * `path` (`Path.t()`) — destination path; parent directories must already
+    * `path` (`Path.t()`)  -  destination path; parent directories must already
       exist.
-    * `opts` (`keyword()`) — the options for `ExCodecs.Spatial.encode/2`, with
+    * `opts` (`keyword()`)  -  the options for `ExCodecs.Spatial.encode/2`, with
       `:format` required for enumerable input and defaulting to `:ply` for an
       already-built cloud. For streaming EXCP/GSPL writes, pass `:schema`
       (see codec docs).

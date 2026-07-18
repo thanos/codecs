@@ -1,6 +1,9 @@
 defmodule ExCodecs.DocumentationTest do
   use ExUnit.Case, async: true
 
+  # Heading/contract linter for moduledocs — exclude with `mix test --exclude lint`
+  @moduletag :lint
+
   @documented_modules [
     ExCodecs,
     ExCodecs.Application,

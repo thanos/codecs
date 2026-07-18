@@ -1,299 +1,157 @@
 # Native Architecture
 
-ExCodecs uses Rust-based NIFs (Native Implemented Functions) via Rustler for high-performance compression operations. This guide explains how the native layer works, how it integrates with the BEAM, and how precompiled distribution ensures reliability.
+ExCodecs implements compression and spatial unpack/pack in a Rust NIF crate
+(`native/ex_codecs_native`), loaded through
+[`RustlerPrecompiled`](https://github.com/philss/rustler_precompiled). This guide
+describes the current crate layout, Dirty scheduler use, precompiled
+distribution, and how Elixir wraps NIF results.
 
-## Why Native Code?
+## Why a NIF?
 
-Compression algorithms perform computationally intensive operations on large binary data. Pure Elixir implementations would be orders of magnitude slower than C/Rust implementations because:
+Compression and dense binary spatial decode are CPU-bound over large binaries.
+Doing that work in Rust lets the library:
 
-- **BEAM binary overhead**: Elixir binaries are managed by the BEAM garbage collector. Large binary processing in Elixir involves frequent allocations.
-- **SIMD and cache efficiency**: Rust and C compilers can auto-vectorize tight loops over byte arrays, using CPU SIMD instructions (AVX2, NEON) that are not available in BEAM.
-- **Memory layout**: Rust can work with contiguous byte slices (`&[u8]`) without copying, while BEAM binaries may require copying between BEAM and native memory.
-- **Algorithm implementation quality**: Libraries like `zstd`, `lz4_flex`, and `bzip2` are highly optimized with years of performance tuning.
+- Operate on contiguous `&[u8]` slices without BEAM binary traversal cost
+- Use mature pure-Rust codec crates (no C compression toolchain at build time)
+- Offload long work to Dirty CPU / Dirty IO schedulers so normal BEAM
+  schedulers stay responsive
 
-The performance difference is significant:
+There is **no** pure-Elixir Zstd/LZ4/Snappy/Bzip2/Blosc2 path. When the NIF is
+absent, codecs register as unavailable and public APIs return
+`%ExCodecs.Error{reason: :nif_not_loaded}`.
 
-| Operation      | Pure Elixir | Rust NIF  |
-|---------------|-------------|-----------|
-| Zstd compress  | ~5-20 MB/s  | ~300+ MB/s|
-| LZ4 compress   | ~10-30 MB/s | ~500+ MB/s|
-| Snappy compress| ~10-30 MB/s | ~500+ MB/s |
+## Elixir entry point
 
-For production workloads, the native implementation is not optional -- it is essential.
-
-## Rustler Integration
-
-ExCodecs uses [Rustler](https://github.com/rusterlium/rustler) to bridge between Elixir and Rust. Rustler provides:
-
-- **NIF generation**: Automatic generation of the NIF boilerplate from Rust function signatures.
-- **Type conversion**: Safe conversion between Elixir terms and Rust types (binary to `&[u8]`, atoms, integers, etc.).
-- **Error handling**: Rust `Result` types map to Elixir `{:ok, ...}` / `{:error, ...}` tuples.
-- **Memory safety**: Rust's ownership model prevents buffer overflows, use-after-free, and other memory errors that are common in C NIFs.
-
-### The Native Module
-
-The Elixir side defines the NIF module:
+`ExCodecs.Native` uses `RustlerPrecompiled` (not `use Rustler` alone):
 
 ```elixir
-defmodule ExCodecs.Native do
-  use Rustler,
-    otp_app: :ex_codecs,
-    crate: :ex_codecs_native,
-    mode: :release
-
-  def zstd_compress(_data, _level), do: :erlang.nif_error(:nif_not_loaded)
-  def zstd_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
-  def lz4_compress(_data, _level), do: :erlang.nif_error(:nif_not_loaded)
-  def lz4_decompress(_data), do: :erlang.nif_error(:nif_not_loaded)
-  # ... other NIFs
-  def codec_versions, do: :erlang.nif_error(:nif_not_loaded)
-  def nif_loaded?, do: not function_exported?(__MODULE__, :zstd_compress, 2)
-end
+use RustlerPrecompiled,
+  otp_app: :ex_codecs,
+  crate: :ex_codecs_native,
+  version: version,
+  base_url: "https://github.com/thanos/codecs/releases/download/v#{version}",
+  mode: :release,
+  nif_versions: ["2.17"],
+  targets: [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-gnu",
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc"
+  ]
 ```
 
-Each function has a fallback that returns `:erlang.nif_error(:nif_not_loaded)`. If the NIF library fails to load, calling any of these functions raises an error. The `nif_loaded?/0` function checks whether the NIF has been loaded by testing if `zstd_compress/2` is still the fallback.
+Each exported function has an Elixir stub that raises
+`:erlang.nif_error(:nif_not_loaded)` until the shared library loads.
+`ExCodecs.Native.nif_loaded?/0` probes `codec_versions/0`.
 
-### The Rust Crate
+Public codecs never call `Native` stubs directly for error shaping: they go
+through `ExCodecs.NIF.safe_call/2` / `wrap/2`, which map atoms and panics into
+`%ExCodecs.Error{}`. Spatial codecs use `ExCodecs.Spatial.Accel` for the same
+purpose.
 
-The Rust crate lives in `native/ex_codecs_native/`:
+## Rust crate layout
 
 ```
 native/ex_codecs_native/
-  Cargo.toml
+  Cargo.toml          # rust-version = "1.94", pure-Rust deps
   src/
-    lib.rs
+    lib.rs            # rustler::init + codec_versions/0
     atoms.rs
-    zstd_codec.rs
-    lz4_codec.rs
-    snappy_codec.rs
-    bzip2_codec.rs
-    blosc2_codec.rs
+    zstd_codec.rs     # structured-zstd
+    lz4_codec.rs      # lz4_flex (size-prepended block)
+    snappy_codec.rs   # snap (raw block)
+    bzip2_codec.rs    # bzip2 0.6 (pure-Rust backend)
+    blosc2_codec.rs   # blosc2-pure-rs
+    spatial.rs        # EXCP / GSPL / PLY pack-unpack + mmap
+    util.rs
 ```
 
-Each codec module implements the compression and decompression functions using the appropriate Rust library:
-
-```rust
-// Simplified example of zstd_codec.rs
-#[rustler::nif]
-fn zstd_compress(data: Binary, level: i32) -> Result<Binary, Error> {
-    let compressed = zstd::encode_all(data.as_slice(), level)
-        .map_err(|e| Error::new(e.to_string()))?;
-    Ok(Binary::new(compressed))
-}
-
-#[rustler::nif]
-fn zstd_decompress(data: Binary) -> Result<Binary, Error> {
-    let decompressed = zstd::decode_all(data.as_slice())
-        .map_err(|e| Error::new(e.to_string()))?;
-    Ok(Binary::new(decompressed))
-}
-```
-
-The `Cargo.toml` specifies the Rust crate dependencies:
+Current compression dependencies (no C `libzstd` / `libbzip2` / c-blosc2):
 
 ```toml
-[dependencies]
-rustler = "0.36"
-zstd = "0.13"
+structured-zstd = "0.0.48"
 lz4_flex = "0.11"
 snap = "1.1"
-bzip2 = "0.4"
+bzip2 = "0.6"
+blosc2-pure-rs = { version = "0.2.4", features = ["zlib-rs"] }
+memmap2 = "0.9"
 ```
 
-The release profile is optimized for performance:
+Release profile: `opt-level = 3`, `lto = true`, `codegen-units = 1`, `strip = true`.
 
-```toml
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+### Version map
+
+`codec_versions/0` returns a string map of backend labels, including
+`"spatial" => "excp-gspl-ply-1"`. Elixir codec modules may hardcode library
+crate versions in `__codec_info__/0`; treat the NIF map as a runtime probe, not
+the only source of truth for HexDocs metadata.
+
+## Dirty scheduling
+
+Dirty scheduling is **explicit** on each NIF (`#[rustler::nif(schedule = ...)]`).
+Rustler does **not** auto-promote long NIFs.
+
+| Kind | Examples |
+|------|----------|
+| `DirtyCpu` | All compress/decompress; EXCP/GSPL/PLY pack and unpack (binary + mmap) |
+| `DirtyIo` | `spatial_mmap_open`, `spatial_append_file` |
+
+Configure dirty CPU count with the VM flag `+SDcpu N` (not `-SDio`).
+
+Implications:
+
+1. Normal schedulers stay free while compression runs on dirty threads.
+2. Concurrent NIF work is limited by dirty scheduler count.
+3. A started NIF cannot be cancelled. Wrapping in `Task.yield/2` +
+   `Task.shutdown/1` abandons the Elixir task; the dirty NIF may still finish
+   and hold a dirty scheduler until it returns.
+
+## Precompiled distribution
+
+CI attaches platform binaries to the GitHub release matching the package
+version. At `mix deps.get` / app start, RustlerPrecompiled downloads the
+matching artifact when present; otherwise it compiles from
+`native/ex_codecs_native` (requires Rust **1.94+**).
+
+`nif_versions: ["2.17"]` matches OTP 26+ NIF ABI 2.17. Supported OTP releases
+for this package are those listed in `mix.exs` / README; precompiled binaries
+target that NIF version.
+
+If load fails entirely, `ExCodecs.Application` registers codecs as unavailable
+(`module: nil`) instead of crashing the VM.
+
+## Error path
+
+```
+Rust Result::Err / atom
+  -> Rustler {:error, atom} or ErlangError
+  -> ExCodecs.NIF.wrap/2 or safe_call/2
+  -> {:error, %ExCodecs.Error{}}
 ```
 
-- **`opt-level = 3`**: Maximum optimization.
-- **`lto = true`**: Link-Time Optimization, enabling cross-crate inlining.
-- **`codegen-units = 1`**: Single codegen unit for better optimization.
-- **`strip = true`**: Strip debug symbols for smaller binaries.
+There is no `Error.from_nif/2` helper. Panic-like `ErlangError` payloads are
+logged and returned as `:compression_failed` with message
+`"Native codec crashed"`.
 
-## DirtyCpu Scheduling
+Decompression honors `:max_output_size` (default 256 MiB) to bound
+amplification; see `ExCodecs.NIF` and `ExCodecs.Compression.decompress/3`.
 
-Compression NIFs are CPU-intensive and can take significant time. The BEAM scheduler has two types of NIFs:
+## Spatial acceleration
 
-- **Normal NIFs**: Must return quickly (under ~1 ms). If they take too long, they block the BEAM scheduler.
-- **Dirty NIFs**: Long-running NIFs that are offloaded to dirty scheduler threads.
+`ExCodecs.Spatial.Accel` is the Elixir ABI over the spatial NIFs: row tuple
+shapes, chunked unpack (`{rows, next_offset}`), pack, and mmap resources.
 
-Rustler automatically marks NIFs as dirty when they are expected to take more than ~1 ms. Compression of data larger than a few kilobytes will take longer than this, so the NIFs in ExCodecs run on dirty CPU schedulers.
-
-### BEAM Scheduler Impact
-
-```
-BEAM Scheduler Threads
-+-------------------------+
-| Scheduler 1  (normal)   |  Runs Elixir processes, short NIFs
-| Scheduler 2  (normal)   |
-| Scheduler 3  (normal)   |
-| Scheduler 4  (normal)   |
-+-------------------------+
-| Dirty CPU 1             |  Runs ExCodecs NIFs, other CPU NIFs
-| Dirty CPU 2             |
-+-------------------------+
-| Dirty IO 1             |  Runs I/O NIFs
-+-------------------------+
-```
-
-The number of dirty CPU schedulers defaults to the number of CPU cores. You can configure this:
-
-```elixir
-# In vm.args or system flags
-+SDcpu 4    # 4 dirty CPU schedulers
-```
-
-### Implications for Production
-
-1. **Dirty NIFs do not block normal schedulers.** Your Elixir processes continue running while compression happens in the background.
-
-2. **Concurrent compression is limited by dirty scheduler count.** If you dispatch more concurrent compression operations than dirty CPU schedulers, they will queue up.
-
-3. **Memory is allocated outside the BEAM heap.** NIF memory allocations use the system allocator, not the BEAM allocator. Large compression buffers do not trigger BEAM garbage collection but do consume system memory.
-
-4. **Monitors and timeouts are not possible for NIF calls.** Once a NIF starts, it runs to completion. You cannot set a timeout for a single NIF call. If you need timeouts, wrap the NIF call in a `Task` with `Task.yield/2`.
-
-```elixir
-# Timeout pattern for NIF calls
-task = Task.async(fn -> ExCodecs.encode(:bzip2, large_data) end)
-
-case Task.yield(task, 5000) || Task.shutdown(task) do
-  {:ok, result} -> result
-  nil -> {:error, :timeout}
-end
-```
-
-## Precompiled Distribution
-
-ExCodecs uses [`rustler_precompiled`](https://github.com/philipatrojek/rustler_precompiled) to distribute pre-built NIF binaries, eliminating the need for a Rust compiler on the target machine.
-
-### How It Works
-
-1. During CI/release, NIF binaries are compiled for all target platforms.
-2. The binaries are attached to the Hex package or fetched from a GitHub release.
-3. At application startup, Rustler loads the precompiled binary for the current platform.
-4. If no precompiled binary is available, Rustler falls back to compiling from source (requires Rust toolchain).
-
-The target platforms configured in `mix.exs`:
-
-```elixir
-defp rustler_precompiled do
-  [
-    targets: [
-      "aarch64-apple-darwin",      # macOS ARM64
-      "x86_64-apple-darwin",        # macOS x86_64
-      "x86_64-unknown-linux-gnu",   # Linux x86_64 (glibc)
-      "x86_64-unknown-linux-musl",  # Linux x86_64 (musl/Alpine)
-      "aarch64-unknown-linux-gnu",  # Linux ARM64 (glibc)
-      "aarch64-unknown-linux-musl", # Linux ARM64 (musl/Alpine)
-      "x86_64-pc-windows-msvc"     # Windows x86_64
-    ],
-    mode: :release,
-    nif_versions: ["2.17"]
-  ]
-end
-```
-
-### NIF Version Compatibility
-
-The `nif_versions: ["2.17"]` field specifies the BEAM NIF API version. OTP 27+ uses NIF version 2.17. This means:
-
-- **OTP 27+**: Full compatibility.
-- **OTP 26 and earlier**: May require compiling from source or using an older precompiled binary.
-
-Check your OTP version:
-
-```elixir
-System.otp_release()
-# => "27"
-```
-
-### Benefits of Precompiled NIFs
-
-- **No Rust toolchain required.** Users do not need to install `rustc`, `cargo`, or any Rust libraries.
-- **Consistent builds.** Every platform gets the same optimized binary.
-- **Fast installation.** `mix deps.get` downloads the precompiled binary; no compilation step.
-- **Reduced CI time.** No Rust compilation in CI pipelines.
-
-### Fallback Behavior
-
-If the precompiled binary for the current platform is not available:
-
-1. Rustler attempts to compile the NIF from source in `native/ex_codecs_native/`.
-2. This requires the Rust toolchain (`rustc`, `cargo`) and the Rust dependencies.
-3. If compilation fails, the NIF is not loaded and all codecs are registered as unavailable.
-
-This fallback is transparent. The `ExCodecs.Native` module detects whether the NIF loaded successfully, and the application handles the unavailable case gracefully.
-
-## Codec Version Reporting
-
-The NIF provides a `codec_versions/0` function that returns the version of each underlying C/Rust library:
-
-```elixir
-ExCodecs.Native.codec_versions()
-# => %{
-#   "zstd" => "1.5.6",
-#   "lz4" => "1.10.0",
-#   "snappy" => "1.1.10",
-#   "bzip2" => "0.4.4",
-#   "blosc2" => "2.14.0"
-# }
-```
-
-Each codec module uses this to populate its `__codec_info__/0` metadata:
-
-```elixir
-defp zstd_version do
-  case ExCodecs.Native.codec_versions() do
-    %{:zstd => v} -> v
-    _ -> "unknown"
-  end
-rescue
-  _ -> "unknown"
-end
-```
-
-The `rescue` clause handles the case where the NIF is not loaded, ensuring the module does not crash during compilation or when the NIF is unavailable.
-
-## Error Handling in Native Code
-
-When a Rust NIF encounters an error, it is converted to an Elixir error through several layers:
-
-1. **Rust side**: The compression library returns a `Result::Err`. Rustler converts this to an `{:error, reason}` term.
-2. **Elixir side**: The codec module does not add additional error handling; the `{:error, reason}` tuple is returned directly.
-3. **ExCodecs API**: The `encode/3` and `decode/3` functions wrap the error in an `%ExCodecs.Error{}` struct.
-
-```elixir
-# Error wrapping in ExCodecs.Native
-def from_nif({:error, reason}, codec) do
-  {:error, %ExCodecs.Error{
-    reason: nif_error_to_atom(reason),
-    message: "NIF error in codec #{codec}: #{inspect(reason)}",
-    codec: codec,
-    details: reason
-  }}
-end
-```
-
-Common NIF error scenarios:
-
-- **Invalid data**: The decompression input is corrupt or not valid compressed data.
-- **Memory allocation failure**: The system is out of memory.
-- **Buffer overflow**: The decompressed size exceeds available memory.
-- **Internal library error**: The underlying C/Rust library returned an unexpected error.
-
-All of these are caught and returned as `{:error, %ExCodecs.Error{}}` tuples, never as exceptions.
+- Prefer `Accel.chunk_size/0` (4096) loops for large clouds.
+- Do not truncate or replace a file while an mmap resource is live
+  (possible SIGBUS). Use `accel: false` / plain IO for untrusted paths.
+- When `Accel.available?/0` is false, codecs fall back to pure Elixir decode.
 
 ## Summary
 
-- ExCodecs uses Rustler NIFs for all compression operations, providing 10-100x speedup over pure Elixir.
-- NIFs run on BEAM Dirty CPU schedulers, preventing them from blocking normal process scheduling.
-- Precompiled binaries are distributed for 7 target platforms, requiring no Rust toolchain for installation.
-- The registry enables graceful degradation when the NIF is unavailable.
-- NIF errors are caught and returned as structured `ExCodecs.Error` tuples, never as exceptions.
-- Release-mode compilation with LTO and `codegen-units = 1` ensures maximum performance.
+- Pure-Rust compression crates behind RustlerPrecompiled NIFs
+- Explicit DirtyCpu / DirtyIo scheduling
+- Structured errors via `ExCodecs.NIF`, never raw exceptions on the public API
+- Optional spatial accel with Elixir fallback and mmap safety caveats

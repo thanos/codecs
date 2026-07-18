@@ -132,7 +132,11 @@ Higher compression levels and larger window sizes consume more memory:
 
 ### Determinism
 
-Some codecs (Snappy, LZ4) produce deterministic output for identical inputs. Others (Zstd at certain levels) may produce different compressed representations that decompress to the same data.
+All ExCodecs backends produce deterministic output for a given input, fixed
+options, and library version: the same `encode(:zstd, data, level: 3)` call
+yields byte-identical output across calls. Output is **not** guaranteed across
+library versions — a new structured-zstd release may produce a different (but
+compatible) frame for the same input.
 
 ## When Compression Helps and Hurts
 
@@ -162,4 +166,4 @@ Compression hurts when:
 
 5. **Test with realistic data.** Synthetic benchmarks are misleading. Use production data or representative samples.
 
-6. **Consider Blosc2 for typed arrays.** If your data is numerical (float arrays, integer matrices), Blosc2's shuffle filters can improve ratios by 2-10x compared to applying a general-purpose codec directly.
+6. **Consider Blosc2 for typed arrays.** If your data is numerical (float arrays, integer matrices), Blosc2's shuffle filters can improve ratios by about 2-4x compared to applying a general-purpose codec directly (illustrative; measure on your data).

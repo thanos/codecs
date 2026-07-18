@@ -4,17 +4,18 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
   ## Options
 
-    * `:format` / `:ply_format` — wire encoding: `:ascii` (default),
+    * `:format` / `:ply_format`  -  wire encoding: `:ascii` (default),
       `:binary` / `:binary_le`, `:binary_be` (not Spatial's `format: :ply`)
-    * `:comments` — header comments
-    * `:as` — decode as `:auto` | `:point_cloud` | `:gaussian_cloud`
-    * `:source` — for `stream_decode/2`: `:auto` | `:file` | `:binary`
+    * `:comments`  -  header comments
+    * `:as`  -  decode as `:auto` | `:point_cloud` | `:gaussian_cloud`
+    * `:source`  -  for `stream_decode/2`: `:auto` | `:file` | `:binary`
 
   Public functions: `encode/2`, `decode/2`, `stream_decode/2`.
   """
 
   alias ExCodecs.Error
   alias ExCodecs.Spatial.Accel
+  alias ExCodecs.Spatial.Codec.StreamSource
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Metadata, Point, PointCloud}
 
   @typedoc """
@@ -46,22 +47,24 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
   ## Arguments
 
-    * `data` (`PointCloud.t() | GaussianCloud.t()`) — a cloud containing valid
+    * `data` (`PointCloud.t() | GaussianCloud.t()`)  -  a cloud containing valid
       `%Point{}` or `%Gaussian{}` structs.
-    * `opts` (`keyword()`) — supported options:
-      * `:ply_format` — preferred wire format: `:ascii` (default), `:binary`
+    * `opts` (`keyword()`)  -  supported options:
+      * `:ply_format`  -  preferred wire format: `:ascii` (default), `:binary`
         (little-endian), `:binary_le`, or `:binary_be`.
-      * `:format` — legacy alias for `:ply_format` when calling this codec
+      * `:format`  -  legacy alias for `:ply_format` when calling this codec
         directly. `:ply_format` takes precedence.
-      * `:comments` — enumerable of strings for PLY `comment` header lines;
+      * `:comments`  -  enumerable of strings for PLY `comment` header lines;
         defaults to `cloud.metadata.comments`.
 
   `:little` and `:big` are also normalized to little-/big-endian output.
-  Any unrecognized wire-format value currently falls back to `:ascii`.
+  Unrecognized wire-format values return `:invalid_options`.
 
   ## Returns
 
     * `{:ok, payload}` where `payload` is an ASCII or binary PLY `binary()`.
+    * `{:error, %ExCodecs.Error{reason: :invalid_options, codec: :ply}}` when
+      `:format` / `:ply_format` is not a supported wire encoding.
     * `{:error, %ExCodecs.Error{reason: :invalid_data, codec: :ply}}` when
       `data` is not a supported cloud or any exception occurs while deriving
       properties, building the header, or encoding rows.
@@ -87,16 +90,17 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   def encode(data, opts \\ [])
 
   def encode(%PointCloud{} = cloud, opts) do
-    format = normalize_format(ply_format_opt(opts))
     comments = Keyword.get(opts, :comments, cloud.metadata.comments)
 
-    with {:ok, props} <- point_properties(cloud.points) do
+    with {:ok, format} <- normalize_format(ply_format_opt(opts)),
+         :ok <- validate_comments(comments),
+         {:ok, props} <- point_properties(cloud.points) do
       body = encode_points(cloud.points, props, format)
       header = build_header(format, length(cloud.points), props, comments)
       {:ok, header <> body}
     end
   rescue
-    e ->
+    e in [ArithmeticError, FunctionClauseError, ArgumentError] ->
       {:error,
        Error.new(:invalid_data,
          codec: :ply,
@@ -105,14 +109,17 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   end
 
   def encode(%GaussianCloud{} = cloud, opts) do
-    format = normalize_format(ply_format_opt(opts))
     comments = Keyword.get(opts, :comments, cloud.metadata.comments)
-    props = gaussian_properties(cloud.gaussians)
-    body = encode_gaussians(cloud.gaussians, props, format)
-    header = build_header(format, length(cloud.gaussians), props, comments)
-    {:ok, header <> body}
+
+    with {:ok, format} <- normalize_format(ply_format_opt(opts)),
+         :ok <- validate_comments(comments) do
+      props = gaussian_properties(cloud.gaussians)
+      body = encode_gaussians(cloud.gaussians, props, format)
+      header = build_header(format, length(cloud.gaussians), props, comments)
+      {:ok, header <> body}
+    end
   rescue
-    e ->
+    e in [ArithmeticError, FunctionClauseError, ArgumentError] ->
       {:error,
        Error.new(:invalid_data,
          codec: :ply,
@@ -144,8 +151,8 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
   ## Arguments
 
-    * `data` (`binary()`) — the complete PLY header and vertex body.
-    * `opts` (`keyword()`) — `:as` may be `:auto` (default), `:point_cloud`, or
+    * `data` (`binary()`)  -  the complete PLY header and vertex body.
+    * `opts` (`keyword()`)  -  `:as` may be `:auto` (default), `:point_cloud`, or
       `:gaussian_cloud`. `:auto` chooses Gaussian output when the property set
       contains `f_dc_0`, `scale_0`, or `rot_0`; otherwise it chooses points.
       The wire format is always read from the header.
@@ -156,16 +163,16 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     * `{:error, %ExCodecs.Error{reason: :invalid_data, codec: :ply}}` for
       non-binary input, missing/invalid magic or format/header lines, missing
       vertex elements, invalid counts/properties, unsupported list/property
-      types, too few ASCII rows, or a short binary body.
+      types, invalid ASCII scalar tokens, token/property count mismatches,
+      missing `x`/`y`/`z`, too few ASCII rows, or a short binary body.
 
   ## Raises / exceptions
 
   The listed structural failures are returned. `Keyword.get/3` raises
   `FunctionClauseError` when `opts` is not a proper keyword list. An unsupported
-  `:as` value raises `CaseClauseError`. Malformed row contents may also raise
-  (`KeyError`, `ArgumentError`, `FunctionClauseError`, or a bitstring match
-  exception), because scalar/required-property validation is not fully wrapped;
-  invalid ASCII scalar tokens are currently coerced to `0.0`.
+  `:as` value raises `CaseClauseError`. Malformed binary row contents may also
+  raise (`KeyError`, `ArgumentError`, `FunctionClauseError`, or a bitstring match
+  exception) when scalar unpacking is not fully wrapped.
 
   ## Examples
 
@@ -184,8 +191,9 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     as = Keyword.get(opts, :as, :auto)
 
     with {:ok, header, body} <- split_header(data),
-         {:ok, parsed} <- parse_header(header) do
-      decode_parsed_body(resolve_as(as, parsed.properties), body, parsed, opts)
+         {:ok, parsed} <- parse_header(header),
+         {:ok, as_resolved} <- resolve_as(as, parsed.properties) do
+      decode_parsed_body(as_resolved, body, parsed, opts)
     end
   end
 
@@ -199,15 +207,17 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   ## Streaming behavior
 
     * `source: :file` (or `:auto` path detection): scans the header until
-      `end_header`, then yields one vertex at a time — binary formats via
+      `end_header`, then yields one vertex at a time  -  binary formats via
       fixed-stride `IO.binread/2`, ASCII via line reads. Peak memory is
       O(header + one vertex / read chunk), not the whole cloud.
     * `source: :binary`: still materializes through `decode/2`, then yields.
 
   ## Arguments
 
-    * `source` (`Path.t() | binary()`) — a path or complete PLY payload.
-    * `opts` (`keyword()`) — `:source` may be `:auto` (default), `:file`, or
+    * `source` (`Path.t() | binary()`)  -  a path or complete PLY payload.
+    * `opts` (`keyword()`)  -  `:source` may be `:binary` (default), `:file`, or
+      `:auto`. Prefer `:file` for paths and `:binary` for payloads; `:auto` is
+      opt-in path sniffing. PLY also accepts `:as`.
       `:binary`. Auto mode treats a short path-like binary as a file only when
       it names a regular file; otherwise it is payload data. `:as` has the same
       meaning as in `decode/2`.
@@ -237,7 +247,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   def stream_decode(source, opts \\ [])
 
   def stream_decode(data, opts) when is_binary(data) do
-    case resolve_ply_source(data, opts) do
+    case StreamSource.resolve(data, opts, :ply, &path_like_ply?/1) do
       {:ok, :binary, bin} ->
         stream_from_decoded_binary(bin, opts)
 
@@ -247,6 +257,9 @@ defmodule ExCodecs.Spatial.Codec.PLY do
           &next_ply_stream_item/1,
           &close_ply_stream/1
         )
+
+      {:error, error} ->
+        Stream.resource(fn -> {:error, error} end, &error_stream/1, fn _ -> :ok end)
     end
   end
 
@@ -260,27 +273,8 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
-  defp resolve_ply_source(bin, opts) do
-    case Keyword.get(opts, :source, :auto) do
-      :binary ->
-        {:ok, :binary, bin}
-
-      :file ->
-        {:ok, :file, bin}
-
-      :auto ->
-        if path_like_ply?(bin) and File.regular?(bin) do
-          {:ok, :file, bin}
-        else
-          {:ok, :binary, bin}
-        end
-    end
-  end
-
   defp path_like_ply?(bin) do
-    byte_size(bin) < 4096 and not ply_binary?(bin) and
-      (String.contains?(bin, "/") or String.contains?(bin, "\\") or
-         String.ends_with?(bin, [".ply", ".PLY"]))
+    StreamSource.path_like?(bin, &ply_binary?/1, [".ply", ".PLY"])
   end
 
   @doc false
@@ -544,6 +538,37 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp sh_rest_coeff_count(%{sh: [_dc | rest]}), do: length(List.flatten(rest))
   defp sh_rest_coeff_count(_), do: 0
 
+  defp validate_comments(comments) when is_list(comments) do
+    bad = Enum.find(comments, &invalid_comment?/1)
+
+    if bad do
+      {:error,
+       Error.new(:invalid_options,
+         codec: :ply,
+         message: "PLY comment contains newline or 'end_header': #{inspect(bad)}"
+       )}
+    else
+      :ok
+    end
+  end
+
+  defp validate_comments(nil), do: :ok
+
+  defp validate_comments(other) do
+    {:error,
+     Error.new(:invalid_options,
+       codec: :ply,
+       message: "PLY comments must be a list of strings, got: #{inspect(other)}"
+     )}
+  end
+
+  defp invalid_comment?(c) when is_binary(c) do
+    String.contains?(c, "\n") or String.contains?(c, "\r") or
+      String.match?(c, ~r/^end_header\b/)
+  end
+
+  defp invalid_comment?(_), do: true
+
   defp build_header(format, count, props, comments) do
     format_line =
       case format do
@@ -693,24 +718,32 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
   # Like type_name/1, encode only packs float and uchar values; decode's
   # unpack/3 still handles the full range of PLY scalar property types.
-  defp pack(:uchar, v, _), do: <<trunc(v)::unsigned-integer-8>>
+  defp pack(:uchar, v, _), do: <<min(max(trunc(v), 0), 255)::unsigned-integer-8>>
   defp pack(:float, v, :binary_le), do: <<v * 1.0::little-float-32>>
   defp pack(:float, v, :binary_be), do: <<v * 1.0::big-float-32>>
 
   # --- Decode ---------------------------------------------------------------
 
-  defp resolve_as(:point_cloud, _), do: :point_cloud
-  defp resolve_as(:gaussian_cloud, _), do: :gaussian_cloud
+  defp resolve_as(:point_cloud, _), do: {:ok, :point_cloud}
+  defp resolve_as(:gaussian_cloud, _), do: {:ok, :gaussian_cloud}
 
   defp resolve_as(:auto, props) do
     names = MapSet.new(Enum.map(props, & &1.name))
 
     if MapSet.member?(names, "f_dc_0") or MapSet.member?(names, "scale_0") or
          MapSet.member?(names, "rot_0") do
-      :gaussian_cloud
+      {:ok, :gaussian_cloud}
     else
-      :point_cloud
+      {:ok, :point_cloud}
     end
+  end
+
+  defp resolve_as(other, _props) do
+    {:error,
+     Error.new(:invalid_options,
+       codec: :ply,
+       message: "Unsupported :as value: #{inspect(other)} (use :auto, :point_cloud, or :gaussian_cloud)"
+     )}
   end
 
   defp decode_parsed_body(:point_cloud, body, parsed, opts) do
@@ -745,13 +778,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
          message: "Expected #{count} vertices, got #{length(lines)}"
        )}
     else
-      points =
-        Enum.map(lines, fn line ->
-          values = String.split(line) |> Enum.map(&parse_ascii_number/1)
-          values_to_point(values, props)
-        end)
-
-      {:ok, points}
+      decode_ascii_lines(lines, props)
     end
   end
 
@@ -771,13 +798,52 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     end
   end
 
+  defp decode_ascii_lines(lines, props) do
+    Enum.reduce_while(lines, {:ok, []}, fn line, {:ok, acc} ->
+      case decode_ascii_line(line, props) do
+        {:ok, point} -> {:cont, {:ok, [point | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, points} -> {:ok, Enum.reverse(points)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp decode_ascii_line(line, props) do
+    with {:ok, values} <- parse_ascii_tokens(String.split(line)) do
+      values_to_point(values, props)
+    end
+  end
+
+  defp parse_ascii_tokens(tokens) do
+    Enum.reduce_while(tokens, {:ok, []}, fn token, {:ok, acc} ->
+      case parse_ascii_number(token) do
+        {:ok, number} -> {:cont, {:ok, [number | acc]}}
+        :error -> {:halt, {:error, invalid_ascii_number_error(token)}}
+      end
+    end)
+    |> case do
+      {:ok, values} -> {:ok, Enum.reverse(values)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp invalid_ascii_number_error(token) do
+    Error.new(:invalid_data,
+      codec: :ply,
+      message: "Invalid ASCII number: #{inspect(token)}"
+    )
+  end
+
   defp decode_vertices_binary(body, props, endian, count, expected, opts) do
     if accel?(opts) do
       types = Enum.map(props, & &1.type)
 
       case Accel.ply_binary_unpack(body, types, endian, 0, count) do
         {:ok, {rows, next}} when length(rows) == count and next >= expected ->
-          {:ok, Enum.map(rows, &values_to_point(&1, props))}
+          rows_to_points(rows, props)
 
         # coveralls-ignore-start
         {:ok, _} ->
@@ -796,13 +862,31 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   end
 
   defp decode_vertices_binary_loop(body, props, endian, count) do
-    {points, _} =
-      Enum.map_reduce(1..count, body, fn _, rest ->
-        {values, next} = unpack_row(rest, props, endian)
-        {values_to_point(values, props), next}
-      end)
+    Enum.reduce_while(1..count, {:ok, {[], body}}, fn _, {:ok, {acc, rest}} ->
+      {values, next} = unpack_row(rest, props, endian)
 
-    {:ok, points}
+      case values_to_point(values, props) do
+        {:ok, point} -> {:cont, {:ok, {[point | acc], next}}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, {points, _}} -> {:ok, Enum.reverse(points)}
+      {:error, _} = err -> err
+    end
+  end
+
+  defp rows_to_points(rows, props) do
+    Enum.reduce_while(rows, {:ok, []}, fn values, {:ok, acc} ->
+      case values_to_point(values, props) do
+        {:ok, point} -> {:cont, {:ok, [point | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, points} -> {:ok, Enum.reverse(points)}
+      {:error, _} = err -> err
+    end
   end
 
   defp decode_gaussians(body, parsed, opts) do
@@ -833,8 +917,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
         Map.get(attrs, "rot_2", 0.0),
         Map.get(attrs, "rot_3", 0.0)
       },
-      sh: extract_sh(attrs),
-      metadata: attrs
+      sh: extract_sh(attrs)
     )
   end
 
@@ -860,51 +943,76 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   end
 
   defp values_to_point(values, props) do
-    paired = Enum.zip(props, values) |> Map.new(fn {%{name: n}, v} -> {n, v} end)
+    if length(values) != length(props) do
+      {:error,
+       Error.new(:invalid_data,
+         codec: :ply,
+         message: "Expected #{length(props)} property values, got #{length(values)}"
+       )}
+    else
+      paired = Enum.zip(props, values) |> Map.new(fn {%{name: n}, v} -> {n, v} end)
+      build_point_from_paired(paired)
+    end
+  end
 
-    color =
-      cond do
-        Map.has_key?(paired, "alpha") and Map.has_key?(paired, "red") ->
-          {trunc(paired["red"]), trunc(paired["green"]), trunc(paired["blue"]),
-           trunc(paired["alpha"])}
+  defp build_point_from_paired(paired) do
+    with {:ok, x} <- required_coord(paired, "x"),
+         {:ok, y} <- required_coord(paired, "y"),
+         {:ok, z} <- required_coord(paired, "z") do
+      color =
+        cond do
+          Map.has_key?(paired, "alpha") and Map.has_key?(paired, "red") ->
+            {trunc(paired["red"]), trunc(paired["green"]), trunc(paired["blue"]),
+             trunc(paired["alpha"])}
 
-        Map.has_key?(paired, "red") ->
-          {trunc(paired["red"]), trunc(paired["green"]), trunc(paired["blue"])}
+          Map.has_key?(paired, "red") ->
+            {trunc(paired["red"]), trunc(paired["green"]), trunc(paired["blue"])}
 
-        true ->
+          true ->
+            nil
+        end
+
+      normal =
+        if Map.has_key?(paired, "nx") do
+          {paired["nx"] * 1.0, paired["ny"] * 1.0, paired["nz"] * 1.0}
+        else
           nil
-      end
+        end
 
-    normal =
-      if Map.has_key?(paired, "nx") do
-        {paired["nx"] * 1.0, paired["ny"] * 1.0, paired["nz"] * 1.0}
-      else
-        nil
-      end
+      known = ["x", "y", "z", "red", "green", "blue", "alpha", "nx", "ny", "nz"]
 
-    known = ["x", "y", "z", "red", "green", "blue", "alpha", "nx", "ny", "nz"]
+      attributes =
+        paired
+        |> Enum.reject(fn {key, _value} -> key in known end)
+        |> Map.new()
 
-    attributes =
-      paired
-      |> Enum.reject(fn {key, _value} -> key in known end)
-      |> Map.new()
+      {:ok, Point.new(x, y, z, color: color, normal: normal, attributes: attributes)}
+    end
+  end
 
-    Point.new(paired["x"] || 0.0, paired["y"] || 0.0, paired["z"] || 0.0,
-      color: color,
-      normal: normal,
-      attributes: attributes
-    )
+  defp required_coord(paired, name) do
+    case Map.fetch(paired, name) do
+      {:ok, value} ->
+        {:ok, value}
+
+      :error ->
+        {:error,
+         Error.new(:invalid_data,
+           codec: :ply,
+           message: "Missing required PLY property #{name}"
+         )}
+    end
   end
 
   defp parse_ascii_number(str) do
     case Integer.parse(str) do
       {i, ""} ->
-        i
+        {:ok, i}
 
       _ ->
         case Float.parse(str) do
-          {f, _} -> f
-          :error -> 0.0
+          {f, ""} -> {:ok, f}
+          _ -> :error
         end
     end
   end
@@ -946,13 +1054,20 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     Keyword.get(opts, :ply_format) || Keyword.get(opts, :format, :ascii)
   end
 
-  defp normalize_format(:ascii), do: :ascii
-  defp normalize_format(:binary), do: :binary_le
-  defp normalize_format(:binary_le), do: :binary_le
-  defp normalize_format(:binary_be), do: :binary_be
-  defp normalize_format(:little), do: :binary_le
-  defp normalize_format(:big), do: :binary_be
-  defp normalize_format(_), do: :ascii
+  defp normalize_format(:ascii), do: {:ok, :ascii}
+  defp normalize_format(:binary), do: {:ok, :binary_le}
+  defp normalize_format(:binary_le), do: {:ok, :binary_le}
+  defp normalize_format(:binary_be), do: {:ok, :binary_be}
+  defp normalize_format(:little), do: {:ok, :binary_le}
+  defp normalize_format(:big), do: {:ok, :binary_be}
+
+  defp normalize_format(other) do
+    {:error,
+     Error.new(:invalid_options,
+       codec: :ply,
+       message: "Unsupported PLY format: #{inspect(other)}"
+     )}
+  end
 
   # --- Streaming helpers ----------------------------------------------------
 
@@ -972,8 +1087,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
       {:ok, io} ->
         case scan_ply_header(io, "", 0) do
           {:ok, parsed, leftover, body_offset} ->
-            as = resolve_as(Keyword.get(opts, :as, :auto), parsed.properties)
-            {:ok, init_ply_stream_state(path, io, leftover, parsed, as, opts, body_offset)}
+            open_ply_stream_resolved(path, io, leftover, parsed, opts, body_offset)
 
           {:error, error} ->
             File.close(io)
@@ -982,6 +1096,17 @@ defmodule ExCodecs.Spatial.Codec.PLY do
 
       {:error, reason} ->
         ply_io_error(reason)
+    end
+  end
+
+  defp open_ply_stream_resolved(path, io, leftover, parsed, opts, body_offset) do
+    case resolve_as(Keyword.get(opts, :as, :auto), parsed.properties) do
+      {:ok, as} ->
+        {:ok, init_ply_stream_state(path, io, leftover, parsed, as, opts, body_offset)}
+
+      {:error, _} = err ->
+        File.close(io)
+        err
     end
   end
 
@@ -1099,16 +1224,18 @@ defmodule ExCodecs.Spatial.Codec.PLY do
          ], :done_mmap}
 
       {:ok, {rows, next_offset}} ->
-        items =
-          Enum.map(rows, fn values ->
-            emit_vertex(values_to_point(values, parsed.properties), as)
-          end)
+        case rows_to_stream_items(rows, parsed.properties, as) do
+          {:ok, items} ->
+            new_offset = next_offset - body_offset
 
-        new_offset = next_offset - body_offset
+            {items,
+             {:ok,
+              {:binary_mmap, ref, types, endian, parsed, as, body_offset, new_offset,
+               i + length(rows)}}}
 
-        {items,
-         {:ok,
-          {:binary_mmap, ref, types, endian, parsed, as, body_offset, new_offset, i + length(rows)}}}
+          {:error, error} ->
+            {[{:error, error}], :done_mmap}
+        end
 
       # coveralls-ignore-start
       {:error, _} ->
@@ -1133,8 +1260,15 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     case take_exact_bytes(io, buf, stride) do
       {:ok, record, rest} ->
         {values, _} = unpack_row(record, parsed.properties, endian)
-        item = emit_vertex(values_to_point(values, parsed.properties), as)
-        {[item], {:ok, {:binary, io, rest, endian, parsed, as, stride, i + 1}}}
+
+        case values_to_point(values, parsed.properties) do
+          {:ok, point} ->
+            {[emit_vertex(point, as)],
+             {:ok, {:binary, io, rest, endian, parsed, as, stride, i + 1}}}
+
+          {:error, error} ->
+            {[{:error, error}], {:done, io}}
+        end
 
       {:error, error} ->
         {[{:error, error}], {:done, io}}
@@ -1148,9 +1282,13 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp next_ply_stream_item({:ok, {:ascii, io, buf, parsed, as, i}}) do
     case take_ascii_vertex_line(io, buf) do
       {:ok, line, rest} ->
-        values = line |> String.split() |> Enum.map(&parse_ascii_number/1)
-        item = emit_vertex(values_to_point(values, parsed.properties), as)
-        {[item], {:ok, {:ascii, io, rest, parsed, as, i + 1}}}
+        case decode_ascii_line(line, parsed.properties) do
+          {:ok, point} ->
+            {[emit_vertex(point, as)], {:ok, {:ascii, io, rest, parsed, as, i + 1}}}
+
+          {:error, error} ->
+            {[{:error, error}], {:done, io}}
+        end
 
       {:error, error} ->
         {[{:error, error}], {:done, io}}
@@ -1162,6 +1300,19 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp next_ply_stream_item(:done), do: {:halt, :done}
   defp next_ply_stream_item(:done_mmap), do: {:halt, :done_mmap}
 
+  defp rows_to_stream_items(rows, props, as) do
+    Enum.reduce_while(rows, {:ok, []}, fn values, {:ok, acc} ->
+      case values_to_point(values, props) do
+        {:ok, point} -> {:cont, {:ok, [emit_vertex(point, as) | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, items} -> {:ok, Enum.reverse(items)}
+      {:error, _} = err -> err
+    end
+  end
+
   defp close_ply_stream({:ok, {:binary, io, _, _, _, _, _, _}}), do: File.close(io)
   defp close_ply_stream({:ok, {:ascii, io, _, _, _, _}}), do: File.close(io)
   defp close_ply_stream({:ok, {:binary_mmap, _, _, _, _, _, _, _, _}}), do: :ok
@@ -1169,7 +1320,7 @@ defmodule ExCodecs.Spatial.Codec.PLY do
   defp close_ply_stream(:done_mmap), do: :ok
   defp close_ply_stream(_), do: :ok
 
-  defp accel?(opts), do: Keyword.get(opts, :accel, true) != false and Accel.available?()
+  defp accel?(opts), do: StreamSource.accel?(opts)
 
   defp emit_vertex(point, :point_cloud), do: point
   defp emit_vertex(point, :gaussian_cloud), do: point_to_gaussian(point)

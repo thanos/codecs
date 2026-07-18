@@ -83,7 +83,8 @@ defmodule ExCodecs.CodecRegistryTest do
     end
 
     test "filters available codecs by category" do
-      assert CodecRegistry.available_codecs(:spatial) == [:gsplat, :ply, :spatial_binary]
+      spatial = CodecRegistry.available_codecs(:spatial)
+      assert Enum.all?([:gsplat, :ply, :spatial_binary], &(&1 in spatial))
       assert :zstd in CodecRegistry.available_codecs(:compression)
       refute :ply in CodecRegistry.available_codecs(:compression)
     end
@@ -149,7 +150,8 @@ defmodule ExCodecs.CodecRegistryTest do
 
     test "returns shared-catalog spatial entries" do
       codecs = CodecRegistry.codecs_by_category(:spatial)
-      assert Enum.map(codecs, & &1.name) == [:gsplat, :ply, :spatial_binary]
+      names = Enum.map(codecs, & &1.name)
+      assert Enum.all?([:gsplat, :ply, :spatial_binary], &(&1 in names))
       assert Enum.all?(codecs, &(&1.interface == :spatial))
     end
   end

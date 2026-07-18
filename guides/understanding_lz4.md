@@ -110,7 +110,7 @@ LZ4 uses a 64 KB sliding window for match finding. This is fixed and not configu
 
 - Matches can reference data up to 64 KB back.
 - Patterns repeated at distances greater than 64 KB cannot be compressed.
-- For data with long-range repetitions, Zstd (with its larger window) achieves significantly better ratios.
+- For data with long-range repetitions, Zstd (typically a larger window than LZ4; not configurable in ExCodecs) achieves significantly better ratios.
 
 ## When LZ4 Excels
 
@@ -125,7 +125,7 @@ LZ4 uses a 64 KB sliding window for match finding. This is fixed and not configu
 - **Cold storage.** Use Zstd or Bzip2 for better ratios when decompression speed is less important.
 - **Small, structured messages.** Consider Snappy for even simpler compression with no configuration.
 - **Numerical arrays.** Use Blosc2 with shuffle filters for better ratios on typed data.
-- **Data with long-range patterns.** LZ4's 64 KB window misses patterns beyond 64 KB. Zstd's larger window captures them.
+- **Data with long-range patterns.** LZ4's 64 KB window misses patterns beyond 64 KB. Zstd's typically larger window (not configurable in ExCodecs) can capture them.
 
 ## Comparison with Snappy
 
@@ -133,9 +133,9 @@ LZ4 and Snappy occupy a similar niche (fast, low-ratio compression). Key differe
 
 | Property          | LZ4                           | Snappy                        |
 |-------------------|-------------------------------|-------------------------------|
-| Compression Speed | ~500 MB/s (fixed fast profile)| ~500 MB/s                    |
-| Decompression Speed | ~2 GB/s                     | ~1.5 GB/s                    |
-| Compression Ratio | Moderate (better than Snappy)| Slightly lower               |
+| Compression Speed | Fast (fixed fast profile)| Fast                     |
+| Decompression Speed | Very fast               | Fast                     |
+| Compression Ratio | Moderate (better than Snappy)| Slightly lower        |
 | Configurable      | No                            | No                            |
 | Format            | LZ4 block format             | Snappy framework format       |
 | Deterministic     | Yes                          | Yes                           |
@@ -149,7 +149,7 @@ LZ4 generally offers better ratio at comparable speeds, while Snappy has a simpl
 | Compression Speed | Faster           | Slower (at high levels)|
 | Decompression Speed| Faster          | Fast                  |
 | Ratio             | Moderate         | High                  |
-| Window Size       | 64 KB (fixed)   | Up to 8 MB+ (configurable) |
+| Window Size       | 64 KB (fixed)   | Larger than LZ4 (not configurable in ExCodecs) |
 | Dictionary       | No               | Not exposed by ExCodecs |
 | Configurable      | No               | Levels 1-22            |
 

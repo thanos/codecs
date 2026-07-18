@@ -23,7 +23,8 @@ pub fn zstd_compress<'a>(env: Env<'a>, data: Binary, level: i32) -> Term<'a> {
 
 #[rustler::nif(schedule = "DirtyCpu")]
 pub fn zstd_decompress<'a>(env: Env<'a>, data: Binary, max_output_size: u64) -> Term<'a> {
-    match structured_zstd::decoding::StreamingDecoder::new(data.as_slice()) {
+    let mut remaining = data.as_slice();
+    match structured_zstd::decoding::StreamingDecoder::new(&mut remaining) {
         Ok(mut decoder) => {
             let mut out = Vec::new();
             let mut buf = [0u8; 8192];
@@ -38,6 +39,10 @@ pub fn zstd_decompress<'a>(env: Env<'a>, data: Binary, max_output_size: u64) -> 
                     }
                     Err(_) => return err(env, atoms::decompression_failed()),
                 }
+            }
+            // Single-frame API: reject concatenated frames / trailing garbage.
+            if !remaining.is_empty() {
+                return err(env, atoms::decompression_failed());
             }
             ok_binary(env, &out)
         }

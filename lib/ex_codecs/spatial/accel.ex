@@ -1,13 +1,49 @@
 defmodule ExCodecs.Spatial.Accel do
-  @moduledoc false
+  @moduledoc """
+  Elixir facade over the spatial Rust NIFs (EXCP, GSPL, binary PLY).
 
-  # Thin facade over DirtyCpu spatial NIFs. Callers fall back to pure Elixir
-  # when `available?/0` is false or a call returns `:nif_not_loaded`.
+  Callers fall back to pure Elixir when `available?/0` is false or a call
+  returns `:nif_not_loaded`. This module defines the **cross-language ABI**:
+  row tuple shapes must match `native/ex_codecs_native/src/spatial.rs`.
+
+  ## Chunk semantics
+
+  Unpack NIFs return `{:ok, {rows, next_offset}}`. Pass at most `chunk_size/0`
+  (4096) rows per call and advance `offset` from `next_offset`. Whole-payload
+  decode paths loop the same way. A partial final record is silently skipped
+  (the unpack `break`s); callers can detect truncation by comparing
+  `next_offset` to the expected body size.
+
+  ## Data coercion
+
+  Out-of-range color bytes are **clamped** to `[0, 255]` (not wrapped). Missing
+  SH coefficients are zero-filled to the declared `sh_rest` length. Both
+  coercions are lossy: a round-trip through encode may not reproduce the
+  original if the input contained out-of-range values.
+
+  ## Row formats
+
+    * EXCP point row: `{x, y, z, color, normal}` where `color` / `normal` are
+      `nil` or tuples matching header flags
+    * GSPL gaussian row:
+      `{{x, y, z}, {r, g, b}, opacity, {sx, sy, sz}, {rw, rx, ry, rz}, sh_list}`
+    * PLY binary: flat numeric lists per vertex, typed by `ply_type_tag/1`
+
+  ## mmap
+
+  Do not truncate or replace a file while an mmap resource from `mmap_open/1`
+  is live — concurrent truncation can SIGBUS and kill the BEAM. Prefer
+  `accel: false` / plain IO for untrusted paths.
+
+  This module is intentional infrastructure; HexDocs may still group it under
+  internals depending on ExDoc filters.
+  """
 
   alias ExCodecs.Native
   alias ExCodecs.Spatial.{Gaussian, Point}
 
   @default_chunk 4_096
+  @available_key {__MODULE__, :available}
 
   @ply_type_tags %{
     char: 1,
@@ -20,7 +56,23 @@ defmodule ExCodecs.Spatial.Accel do
     double: 8
   }
 
+  @doc """
+  Returns whether spatial NIFs are loaded (cached for the VM lifetime).
+  """
+  @spec available?() :: boolean()
   def available? do
+    case :persistent_term.get(@available_key, :unset) do
+      :unset ->
+        value = probe_available()
+        :persistent_term.put(@available_key, value)
+        value
+
+      value when is_boolean(value) ->
+        value
+    end
+  end
+
+  defp probe_available do
     case safe(fn -> Native.codec_versions() end) do
       map when is_map(map) ->
         Map.has_key?(map, "spatial") or Map.has_key?(map, :spatial)
@@ -32,6 +84,8 @@ defmodule ExCodecs.Spatial.Accel do
     end
   end
 
+  @doc "Preferred max row count per unpack NIF call."
+  @spec chunk_size() :: pos_integer()
   def chunk_size, do: @default_chunk
 
   # --- EXCP -----------------------------------------------------------------
@@ -86,7 +140,7 @@ defmodule ExCodecs.Spatial.Accel do
   def ply_binary_unpack(data, types, endian, offset \\ 0, max_count \\ @default_chunk)
       when is_binary(data) and is_list(types) do
     tags = Enum.map(types, &ply_type_tag/1)
-    little? = endian in [:binary_le, :little, true]
+    little? = endian in [:binary_le, :little]
 
     nif_chunk(
       fn -> Native.ply_binary_unpack(data, tags, little?, offset, max_count) end,
@@ -96,7 +150,7 @@ defmodule ExCodecs.Spatial.Accel do
 
   def ply_binary_unpack_mmap(resource, types, endian, offset \\ 0, max_count \\ @default_chunk) do
     tags = Enum.map(types, &ply_type_tag/1)
-    little? = endian in [:binary_le, :little, true]
+    little? = endian in [:binary_le, :little]
 
     nif_chunk(
       fn -> Native.ply_binary_unpack_mmap(resource, tags, little?, offset, max_count) end,
@@ -154,8 +208,9 @@ defmodule ExCodecs.Spatial.Accel do
     sh =
       case g.sh do
         nil -> []
-        [_dc | rest] -> List.flatten(rest)
-        list when is_list(list) -> list |> List.flatten() |> Enum.drop(3)
+        [] -> []
+        [[_ | _] | rest] -> List.flatten(rest)
+        [h | _] = list when is_number(h) -> list |> List.flatten() |> Enum.drop(3)
       end
       |> then(fn vals ->
         vals
@@ -225,18 +280,21 @@ defmodule ExCodecs.Spatial.Accel do
     fun.()
   rescue
     e ->
-      # Rustler may raise ArgumentError for bad resources; that is not always an
-      # `%ErlangError{}`, so discriminate on the struct rather than `rescue in`.
       case e do
-        # coveralls-ignore-start
         %ErlangError{original: :nif_not_loaded} ->
           {:error, :nif_not_loaded}
 
         %ErlangError{original: other} ->
           {:error, other}
 
-        # coveralls-ignore-stop
+        %ArgumentError{} ->
+          {:error, Exception.message(e)}
+
         other ->
+          require Logger
+
+          Logger.warning("ExCodecs.Spatial.Accel unexpected exception: #{inspect(other)}")
+
           {:error, Exception.message(other)}
       end
   end

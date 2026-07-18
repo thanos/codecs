@@ -1,6 +1,8 @@
 defmodule ExCodecs.Spatial.BoundsTest do
   use ExUnit.Case, async: true
 
+  doctest ExCodecs.Spatial.Bounds
+
   alias ExCodecs.Spatial.{Bounds, Point}
 
   test "computes bounds from points" do

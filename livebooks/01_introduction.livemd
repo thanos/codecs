@@ -40,21 +40,19 @@ decompressing. ExCodecs is one framework with category APIs shaped for their
 data: binary registry codecs use `ExCodecs.encode/3` / `decode/3`, while
 point-cloud and Gaussian formats use `ExCodecs.Spatial`.
 
+**Binary registry interface:**
+
 ```elixir
-# Binary registry interface:
-#   {:ok, encoded} = ExCodecs.encode(:some_codec, data)
-#   {:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
-#   decoded == data  # round-trip guarantee
-#
-# Spatial category interface:
-#   {:ok, encoded} = ExCodecs.Spatial.encode(cloud, format: :ply)
-#   {:ok, decoded} = ExCodecs.Spatial.decode(encoded, format: :ply)
+{:ok, encoded} = ExCodecs.encode(:some_codec, data)
+{:ok, decoded} = ExCodecs.decode(:some_codec, encoded)
+decoded == data  # round-trip guarantee
 ```
 
-<!-- livebook:{"output":true} -->
+**Spatial category interface:**
 
-```
-nil
+```elixir
+{:ok, encoded} = ExCodecs.Spatial.encode(cloud, format: :ply)
+{:ok, decoded} = ExCodecs.Spatial.decode(encoded, format: :ply)
 ```
 
 ## Why Codecs Matter
@@ -65,9 +63,9 @@ Compression and encoding are fundamental to production systems:
 | --------------------- | ------------------------------------------- |
 | **Storage cost**      | Compressed data uses less disk space        |
 | **Network bandwidth** | Smaller payloads mean faster transfers      |
-| **Data integrity**    | Decode failures detect corruption           |
+| **Data integrity**    | Some framed codecs detect corruption on decode; raw LZ4/Snappy blocks may not |
 | **Memory efficiency** | Compressed caches fit more in RAM           |
-| **Scientific data**   | Blosc2 shuffle+compress slashes array sizes |
+| **Scientific data**   | Blosc2 shuffle+compress reduces typed-array size |
 
 A codec framework gives you a **single consistent API** over multiple algorithms, so you can choose the right tool per workload without rewriting integration code.
 
@@ -75,13 +73,11 @@ A codec framework gives you a **single consistent API** over multiple algorithms
 
 ExCodecs is a **codec framework**, not just a compression library:
 
-1. **Specialized category APIs** — one framework without unsafe argument overloading
-2. **Shared catalog** — query binary and spatial codecs, support, and metadata
-3. **Extensible** — binary codecs use `ExCodecs.Codec`; domain categories can define suitable contracts
-4. **NIF-native** — Rust-powered NIFs for production throughput
-5. **Consistent errors** — structured `%ExCodecs.Error{}` for all failure modes
-
-Let's see it in action.
+1. **Specialized category APIs** - one framework without unsafe argument overloading
+2. **Shared catalog** - query binary and spatial codecs, support, and metadata
+3. **Extensible** - binary codecs use `ExCodecs.Codec`; domain categories can define suitable contracts
+4. **NIF-native** - Rust NIFs for compression throughput
+5. **Consistent errors** - structured `%ExCodecs.Error{}` for all failure modes
 
 ```elixir
 original = String.duplicate(~S"""

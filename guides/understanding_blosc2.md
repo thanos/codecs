@@ -83,7 +83,7 @@ Blocks still improve cache utilization inside compression.
 
 ### Step 2: Shuffle Filters
 
-The shuffle filter is Blosc2's most powerful feature for typed data. It reorders bytes within elements before compression:
+The shuffle filter is Blosc2's main advantage for typed data. It reorders bytes within elements before compression:
 
 **Byte Shuffle** (`shuffle: :byte`):
 
@@ -230,7 +230,7 @@ The `typesize` tells Blosc2 how many bytes each element occupies. It is critical
 
 Setting `typesize: 1` with `shuffle: :byte` is equivalent to `shuffle: :none` because there is no intra-element byte grouping.
 
-Setting `typesize: 8` with `shuffle: :byte` on float64 arrays typically provides 2-10x ratio improvement over compressing the raw data directly.
+Setting `typesize: 8` with `shuffle: :byte` on float64 arrays typically provides about a 2-4x ratio improvement over compressing the raw data directly (illustrative; measure on your arrays).
 
 **Important**: The data length should ideally be a multiple of `typesize` for the shuffle filter to work correctly. If the data length is not a multiple of `typesize`, Blosc2 will still work but the last partial element will not benefit from shuffling.
 
@@ -283,7 +283,8 @@ or configurable native decompression threads.
 
 ## Ratio Improvement from Shuffle
 
-The shuffle filter is Blosc2's key advantage for numerical data. Here are typical ratio improvements:
+The shuffle filter is Blosc2's key advantage for numerical data. Illustrative
+ratio improvements (measure on your arrays):
 
 | Data Type         | Zstd Alone | Blosc2 + Zstd + Byte Shuffle | Improvement |
 |-------------------|------------|-------------------------------|-------------|
@@ -292,7 +293,7 @@ The shuffle filter is Blosc2's key advantage for numerical data. Here are typica
 | Mixed JSON        | 3.0:1      | 3.0:1 (shuffle: :none)        | No change   |
 | Random binary     | 1.01:1     | 1.01:1                        | No change   |
 
-For numerical data, the improvement from shuffle is dramatic and consistent. The more regular the data (arrays of identical types), the greater the benefit.
+For numerical data, shuffle often helps substantially when the element layout is regular.
 
 ## Comparison with Other Codecs
 

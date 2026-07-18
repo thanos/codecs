@@ -23,6 +23,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   alias ExCodecs.Error
   alias ExCodecs.Spatial.Accel
+  alias ExCodecs.Spatial.Codec.StreamSource
   alias ExCodecs.Spatial.{Gaussian, GaussianCloud, Metadata}
 
   @magic "GSPL"
@@ -45,11 +46,11 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   ## Arguments
 
-    * `data` (`GaussianCloud.t()`) — a cloud of valid `%Gaussian{}` structs.
+    * `data` (`GaussianCloud.t()`)  -  a cloud of valid `%Gaussian{}` structs.
       Each Gaussian has position/color/scale 3-tuples, a rotation 4-tuple,
       numeric opacity, and optional SH data shaped as `[dc | rest]` (nested
       rest lists are flattened).
-    * `opts` (`keyword()`) — reserved and currently ignored.
+    * `opts` (`keyword()`)  -  reserved and currently ignored.
 
   ## Returns
 
@@ -102,9 +103,9 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   ## Arguments
 
-    * `enumerable` (`Enumerable.t()`) — `%Gaussian{}` elements.
-    * `path` (`Path.t()`) — destination file path.
-    * `opts` (`keyword()`) — requires `:schema`. Use `[]` / `%{}` for no SH
+    * `enumerable` (`Enumerable.t()`)  -  `%Gaussian{}` elements.
+    * `path` (`Path.t()`)  -  destination file path.
+    * `opts` (`keyword()`)  -  requires `:schema`. Use `[]` / `%{}` for no SH
       rest coefficients, or `[sh_rest: n]` / `%{sh_rest: n}` for `n` shared
       rest floats per Gaussian (shorter lists are zero-padded).
 
@@ -140,13 +141,15 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
       flags = if sh_rest > 0, do: 1, else: 0
 
       try do
-        :ok = IO.binwrite(io, gspl_header(flags, 0, sh_rest))
-
-        count = write_gaussian_chunks(enumerable, io, sh_rest, opts)
-
-        {:ok, 0} = :file.position(io, 0)
-        :ok = IO.binwrite(io, gspl_header(flags, count, sh_rest))
-        :ok
+        with :ok <- binwrite(io, gspl_header(flags, 0, sh_rest)),
+             {:ok, count} <- write_gaussian_chunks(enumerable, io, sh_rest, opts),
+             {:ok, _} <- :file.position(io, 0),
+             :ok <- binwrite(io, gspl_header(flags, count, sh_rest)) do
+          :ok
+        else
+          {:error, %Error{}} = err -> err
+          {:error, reason} -> io_error(reason)
+        end
       catch
         {:bad_gaussian, other} ->
           {:error,
@@ -237,8 +240,8 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
   ## Arguments
 
-    * `data` (`binary()`) — a complete GSPL payload.
-    * `opts` (`keyword()`) — reserved and currently ignored.
+    * `data` (`binary()`)  -  a complete GSPL payload.
+    * `opts` (`keyword()`)  -  reserved and currently ignored.
 
   ## Returns
 
@@ -294,19 +297,21 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   ## Streaming behavior
 
     * `source: :file` (or `:auto` path detection): header then chunked
-      records — Rust mmap + DirtyCpu unpack when available, otherwise
+      records  -  Rust mmap + DirtyCpu unpack when available, otherwise
       `IO.binread/2` per record.
     * `source: :binary`: chunked Rust unpack when available; otherwise
       materializes through `decode/2`.
 
-  Prefer `source: :file` for multi‑MB / multi‑GB `.gspl` paths.
+  Prefer `source: :file` for multi-MB / multi-GB `.gspl` paths.
   Pass `accel: false` to force the pure-Elixir path.
 
   ## Arguments
 
-    * `source` (`Path.t() | binary()`) — filesystem path or complete GSPL
+    * `source` (`Path.t() | binary()`)  -  filesystem path or complete GSPL
       payload. Both are binaries, so `:source` controls resolution.
-    * `opts` (`keyword()`) — `:source` may be `:auto` (default), `:file`, or
+    * `opts` (`keyword()`)  -  `:source` may be `:binary` (default), `:file`, or
+      `:auto`. Prefer `:file` for paths and `:binary` for payloads; `:auto` is
+      opt-in path sniffing (see `docs/spatial_formats.md`).
       `:binary`.
 
   ## Returns
@@ -314,8 +319,8 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   An `Enumerable.t()` yielding `%Gaussian{}` values. Failures are delayed until
   enumeration as exactly one `{:error, %ExCodecs.Error{}}`:
 
-    * `reason: :io_error` — the file cannot be opened or read
-    * `reason: :invalid_data` — bad magic/version, truncated header, or a
+    * `reason: :io_error`  -  the file cannot be opened or read
+    * `reason: :invalid_data`  -  bad magic/version, truncated header, or a
       truncated record mid-stream (`codec: :gsplat`)
 
   ## Raises / exceptions
@@ -334,7 +339,7 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   def stream_decode(source, opts \\ [])
 
   def stream_decode(data, opts) when is_binary(data) do
-    case resolve_source(data, opts) do
+    case StreamSource.resolve(data, opts, :gsplat, &path_like?/1) do
       {:ok, :binary, bin} ->
         stream_from_binary(bin, opts)
 
@@ -344,6 +349,9 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
           &next_gspl_item/1,
           &close_gspl_file/1
         )
+
+      {:error, error} ->
+        error_stream(error)
     end
   end
 
@@ -385,27 +393,8 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
     error_stream(Error.new(:invalid_data, codec: :gsplat, message: "Invalid GSPLAT binary"))
   end
 
-  defp resolve_source(bin, opts) do
-    case Keyword.get(opts, :source, :auto) do
-      :binary ->
-        {:ok, :binary, bin}
-
-      :file ->
-        {:ok, :file, bin}
-
-      :auto ->
-        if path_like?(bin) and File.regular?(bin) do
-          {:ok, :file, bin}
-        else
-          {:ok, :binary, bin}
-        end
-    end
-  end
-
   defp path_like?(bin) do
-    byte_size(bin) < 4096 and not String.starts_with?(bin, @magic) and
-      (String.contains?(bin, "/") or String.contains?(bin, "\\") or
-         String.ends_with?(bin, [".gspl", ".bin"]))
+    StreamSource.path_like?(bin, &String.starts_with?(&1, @magic), [".gspl", ".bin"])
   end
 
   defp open_gspl_file(path, opts) do
@@ -688,8 +677,9 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
     gaussians
     |> Enum.map(fn
       %{sh: nil} -> 0
-      %{sh: [_dc | rest]} -> length(List.flatten(rest))
-      %{sh: other} when is_list(other) -> max(length(List.flatten(other)) - 3, 0)
+      %{sh: []} -> 0
+      %{sh: [[_ | _] | rest]} -> length(List.flatten(rest))
+      %{sh: [h | _] = other} when is_number(h) -> max(length(List.flatten(other)) - 3, 0)
     end)
     |> Enum.max(fn -> 0 end)
   end
@@ -721,10 +711,9 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
   end
 
   defp sh_rest_values(nil), do: []
-  defp sh_rest_values([_dc | rest]), do: List.flatten(rest)
-  # coveralls-ignore-start
-  defp sh_rest_values(list) when is_list(list), do: list |> List.flatten() |> Enum.drop(3)
-  # coveralls-ignore-stop
+  defp sh_rest_values([]), do: []
+  defp sh_rest_values([[_ | _] | rest]), do: List.flatten(rest)
+  defp sh_rest_values([h | _] = list) when is_number(h), do: list |> List.flatten() |> Enum.drop(3)
 
   defp encode_gaussians_body(gaussians, sh_rest, opts) do
     if accel?(opts) do
@@ -751,10 +740,13 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
 
     enumerable
     |> Stream.chunk_every(chunk_size)
-    |> Enum.reduce(0, fn chunk, n ->
+    |> Enum.reduce_while({:ok, 0}, fn chunk, {:ok, n} ->
       gaussians = assert_gaussians!(chunk)
-      :ok = write_gaussian_chunk(io, gaussians, sh_rest, opts)
-      n + length(gaussians)
+
+      case write_gaussian_chunk(io, gaussians, sh_rest, opts) do
+        :ok -> {:cont, {:ok, n + length(gaussians)}}
+        {:error, _} = err -> {:halt, err}
+      end
     end)
   end
 
@@ -769,37 +761,73 @@ defmodule ExCodecs.Spatial.Codec.Gsplat do
     if accel?(opts) do
       case Accel.gspl_pack(gaussians, sh_rest) do
         {:ok, bin} ->
-          IO.binwrite(io, bin)
+          binwrite(io, bin)
 
         # coveralls-ignore-start
         _ ->
-          Enum.each(gaussians, &IO.binwrite(io, encode_gaussian(&1, sh_rest)))
+          write_gaussians_elixir(io, gaussians, sh_rest)
           # coveralls-ignore-stop
       end
     else
-      Enum.each(gaussians, &IO.binwrite(io, encode_gaussian(&1, sh_rest)))
+      write_gaussians_elixir(io, gaussians, sh_rest)
     end
-
-    :ok
   end
 
-  defp accel?(opts), do: Keyword.get(opts, :accel, true) != false and Accel.available?()
+  defp write_gaussians_elixir(io, gaussians, sh_rest) do
+    Enum.reduce_while(gaussians, :ok, fn g, :ok ->
+      case binwrite(io, encode_gaussian(g, sh_rest)) do
+        :ok -> {:cont, :ok}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  defp binwrite(io, data) do
+    case :file.write(io, data) do
+      :ok -> :ok
+      {:error, reason} -> io_error(reason)
+    end
+  end
+
+  defp accel?(opts), do: StreamSource.accel?(opts)
 
   defp decode_gaussians(bin, 0, _sh_rest, _opts), do: {:ok, [], bin}
 
   defp decode_gaussians(bin, count, sh_rest, opts) do
     if accel?(opts) do
-      case Accel.gspl_unpack(bin, sh_rest, 0, count) do
-        {:ok, {gaussians, _}} when length(gaussians) == count ->
-          {:ok, gaussians, <<>>}
-
-        # Incomplete / failed Accel unpack: Elixir path preserves "Truncated SH"
-        # and other field-specific messages.
-        _ ->
-          decode_gaussians_elixir(bin, count, sh_rest)
-      end
+      decode_gaussians_accel(bin, count, sh_rest, 0, 0, [])
     else
       decode_gaussians_elixir(bin, count, sh_rest)
+    end
+  end
+
+  defp decode_gaussians_accel(_bin, count, _sh_rest, _offset, i, acc) when i >= count do
+    {:ok, Enum.reverse(acc), <<>>}
+  end
+
+  defp decode_gaussians_accel(bin, count, sh_rest, offset, i, acc) do
+    want = min(Accel.chunk_size(), count - i)
+
+    case Accel.gspl_unpack(bin, sh_rest, offset, want) do
+      {:ok, {gaussians, next}} when length(gaussians) == want ->
+        decode_gaussians_accel(
+          bin,
+          count,
+          sh_rest,
+          next,
+          i + want,
+          Enum.reverse(gaussians, acc)
+        )
+
+      # Incomplete / failed Accel unpack: Elixir path preserves "Truncated SH"
+      # and other field-specific messages, resuming at remaining bytes.
+      _ ->
+        rest = binary_part(bin, offset, byte_size(bin) - offset)
+
+        case decode_gaussians_elixir(rest, count - i, sh_rest) do
+          {:ok, gs, leftover} -> {:ok, Enum.reverse(acc, gs), leftover}
+          {:error, _} = err -> err
+        end
     end
   end
 

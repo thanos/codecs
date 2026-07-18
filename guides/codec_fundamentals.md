@@ -31,7 +31,7 @@ Key properties of this design:
   via `ExCodecs.Spatial`).
 - **Optionally configurable.** The `opts` keyword list allows codec-specific tuning (compression level, block size, shuffle mode) while keeping the call signature uniform.
 - **Explicit error handling.** Every operation returns `{:ok, result}` or `{:error, %ExCodecs.Error{}}`. There are no exceptions for normal failure modes.
-- **Composable.** Because the input and output share the same type, codecs can be chained: encode with Zstd, then encode the result with Blosc2 if desired.
+- **Composable.** Because the input and output share the same type, codecs can be chained. The sensible direction is to compress already-binary data with a fast codec (e.g. spatial `:ply` → `:zstd`); chaining two general-purpose compressors (Zstd-then-Blosc2) usually wastes time since the inner output is already high-entropy.
 - **Category modules** provide domain naming (`Compression.compress/3`) or
   non-binary shapes (`Spatial.encode/2`) without overloading the registry API.
 

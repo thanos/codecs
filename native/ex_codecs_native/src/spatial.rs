@@ -539,14 +539,16 @@ fn ply_binary_unpack<'a>(
     )
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyIo")]
 fn spatial_mmap_open<'a>(env: Env<'a>, path: String) -> Term<'a> {
+    // Caller must not truncate/replace the file while the mmap resource is live
+    // (SIGBUS can kill the BEAM). Prefer plain IO for untrusted paths.
     match File::open(&path).and_then(|f| unsafe { Mmap::map(&f) }) {
         Ok(mmap) => {
             let resource = ResourceArc::new(MappedSpatial { mmap });
             (atoms::ok(), resource).encode(env)
         }
-        Err(_) => err(env, atoms::invalid_data()),
+        Err(_) => err(env, atoms::io_error()),
     }
 }
 
@@ -609,13 +611,13 @@ fn ply_binary_unpack_mmap<'a>(
 }
 
 /// Append packed body bytes to a file (chunked encode helper).
-#[rustler::nif(schedule = "DirtyCpu")]
+#[rustler::nif(schedule = "DirtyIo")]
 fn spatial_append_file<'a>(env: Env<'a>, path: String, data: Binary) -> Term<'a> {
     match File::options().append(true).create(true).open(&path) {
         Ok(mut file) => match file.write_all(data.as_slice()) {
             Ok(()) => atoms::ok().encode(env),
-            Err(_) => err(env, atoms::invalid_data()),
+            Err(_) => err(env, atoms::io_error()),
         },
-        Err(_) => err(env, atoms::invalid_data()),
+        Err(_) => err(env, atoms::io_error()),
     }
 }

@@ -107,8 +107,12 @@ defmodule ExCodecs.Compression do
 
     * `codec` (`atom()`) — registered codec that produced the payload
     * `data` (`binary()`) — compressed bytes in that codec's wire format
-    * `opts` (`keyword()`) — codec-specific decode options; defaults to `[]`
-      and is currently ignored by the built-in compression codecs
+    * `opts` (`keyword()`) — decode options; defaults to `[]`. Built-in
+      compression codecs honor `:max_output_size` (positive integer bytes,
+      default 256 MiB). Do not raise the limit for untrusted inputs.
+      lz4/snappy/blosc2 allocate up to `max_output_size` before verifying
+      content, so N concurrent malicious requests can occupy N x 256 MiB;
+      tighten the limit for concurrent untrusted workloads.
 
   ## Returns
 
@@ -118,6 +122,8 @@ defmodule ExCodecs.Compression do
       * `:unsupported_codec` when `codec` is not registered
       * `:codec_unavailable` when its implementation is unavailable
       * `:invalid_data` for invalid argument types or an unexpected NIF result
+      * `:invalid_options` when `:max_output_size` is not a positive integer
+      * `:output_limit_exceeded` when decompressed size would exceed the limit
       * `:decompression_failed` for corrupt, truncated, or mismatched input
       * `:nif_not_loaded` when the native library is unavailable
 

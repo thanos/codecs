@@ -1,20 +1,25 @@
 defmodule ExCodecs.Compression.Bzip2Test do
   use ExUnit.Case, async: true
 
+  @moduletag :doctest
+  doctest ExCodecs.Compression.Bzip2
+
   alias ExCodecs.Compression.Bzip2
 
   describe "encode/2" do
-    test "compresses data with default block size" do
-      data = :crypto.strong_rand_bytes(1024)
+    test "round-trips data at default block size" do
+      data = String.duplicate("Hello, World! ", 256)
       assert {:ok, compressed} = Bzip2.encode(data, [])
-      assert is_binary(compressed)
+      assert {:ok, ^data} = Bzip2.decode(compressed, [])
+      assert byte_size(compressed) < byte_size(data)
     end
 
-    test "compresses data with custom block size" do
-      data = :crypto.strong_rand_bytes(1024)
+    test "round-trips data at every block size 1..9" do
+      data = String.duplicate("Hello, World! This is a compression test. ", 256)
 
       for bs <- 1..9 do
-        assert {:ok, _c} = Bzip2.encode(data, block_size: bs)
+        assert {:ok, compressed} = Bzip2.encode(data, block_size: bs)
+        assert {:ok, ^data} = Bzip2.decode(compressed, [])
       end
     end
 

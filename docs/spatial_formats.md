@@ -55,11 +55,13 @@ normal `{0,0,0}`). Mixed optional fields therefore round-trip with defaults fill
 - Pass `accel: false` on encode/decode/stream helpers to force pure Elixir.
 
 Prefer explicit `source: :file` or `source: :binary` when the argument is
-ambiguous. File streams prefer mmap + DirtyCpu unpack when Accel is available.
+ambiguous (`:binary` is the default). File streams prefer mmap + DirtyCpu
+unpack when Accel is available. Do not truncate a mapped file while a stream
+is live (SIGBUS risk).
 
-`:auto` treats a binary as a path only when it looks path-like (under 4 KiB, no
-`ply`/`EXCP`/`GSPL` magic, and contains `/` or `\` or ends with `.ply`/`.excp`/
-`.gspl`/`.bin`) **and** `File.regular?/1` is true. Edge cases:
+`:auto` (opt-in) treats a binary as a path only when it looks path-like (under
+4 KiB, no `ply`/`EXCP`/`GSPL` magic, and contains `/` or `\` or ends with
+`.ply`/`.excp`/`.gspl`/`.bin`) **and** `File.regular?/1` is true. Edge cases:
 
 - A real file with no separator/extension is **not** auto-opened.
 - A short binary containing `/` that happens to be a regular file path **is** opened.

@@ -50,14 +50,17 @@ defmodule ExCodecs.Application do
 
   ## Callback implementation
 
-  An OTP application that embeds a similar registry can use the same shape:
+  An OTP application that embeds a similar registry can use the same shape.
+  Note: `ExCodecs.CodecRegistry` registers under a fixed global name, so the
+  example below is for a **separate** registry module, not a second instance
+  of the library's own.
 
       defmodule MyApp.Application do
         use Application
 
         @impl Application
         def start(_type, _args) do
-          children = [{ExCodecs.CodecRegistry, register: fn -> :ok end}]
+          children = [{MyApp.CodecRegistry, register: fn -> :ok end}]
           Supervisor.start_link(children,
             strategy: :one_for_one,
             name: MyApp.Supervisor
@@ -74,13 +77,7 @@ defmodule ExCodecs.Application do
 
     opts = [strategy: :one_for_one, name: ExCodecs.Supervisor]
 
-    case Supervisor.start_link(children, opts) do
-      {:ok, pid} ->
-        {:ok, pid}
-
-      error ->
-        error
-    end
+    Supervisor.start_link(children, opts)
   end
 
   @doc false

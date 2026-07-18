@@ -1,6 +1,6 @@
 # ExCodecs Architecture
 
-A production-quality, extensible BEAM-native codec framework for Elixir.
+An extensible BEAM-native codec framework for Elixir.
 
 ## Table of Contents
 
@@ -421,7 +421,7 @@ the need for users to have a Rust toolchain installed:
 # mix.exs
 defp deps do
   [
-    {:rustler, "~> 0.36", runtime: false},
+    {:rustler, "~> 0.36", optional: true},
     {:rustler_precompiled, "~> 0.8"},
   ]
 end
@@ -748,7 +748,14 @@ category's preferred built-in order.
 | `:spatial_binary` | `ExCodecs.Spatial.Codec.Binary`     |
 | `:gsplat`         | `ExCodecs.Spatial.Codec.Gsplat`     |
 
-### Hashing
+### Future categories (not implemented)
+
+The categories below are **planned but not shipped**. They are sketched here to
+illustrate the extensibility model; the code examples are illustrative, not
+runnable, and the registry entries shown do not exist today. `:irreversible_codec`
+is not in the current `error_reason()` type.
+
+#### Hashing
 
 Hashing codecs encode data into fixed-length digests. Because hashing is
 one-way, `decode` will raise or return an error -- it is a symmetric API
@@ -772,7 +779,7 @@ Planned hashing codecs:
 | BLAKE3     | Variable      | Very fast, configurable output  |
 | xxHash     | 4/8 bytes     | Non-cryptographic, very fast    |
 
-### Checksums
+#### Checksums
 
 Checksum codecs produce small integrity tags. Unlike hashes, checksums may
 support a `verify` operation through encode/decode symmetry:
@@ -792,7 +799,7 @@ Planned checksum codecs:
 | Adler32| 4 bytes       | Faster than CRC32, less robust|
 | xxHash32| 4 bytes      | Fast non-cryptographic       |
 
-### Binary Encodings
+#### Binary Encodings
 
 Binary encoding codecs convert between binary formats and their text
 representations:
@@ -816,7 +823,7 @@ Planned encoding codecs:
 | Base16  | 100%     | Hex encoding                      |
 | Base58  | ~37%     | Bitcoin-style, no ambiguous chars|
 
-### Content Addressing
+#### Content Addressing
 
 Content-addressed codecs combine hashing and encoding for use in
 content-addressable storage systems:

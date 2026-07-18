@@ -229,7 +229,9 @@ defmodule ExCodecs.Spatial.PointCloud do
   end
 
   @doc """
-  Appends many points (via repeated `add_point/2`).
+  Appends many points in one concat and one bounds fold (O(n)).
+
+  Prefer this over repeated `add_point/2` for bulk inserts.
 
   ## Arguments
 
@@ -253,7 +255,32 @@ defmodule ExCodecs.Spatial.PointCloud do
       2
   """
   @spec add_points(t(), [Point.t()]) :: t()
-  def add_points(%__MODULE__{} = cloud, new_points) when is_list(new_points) do
-    Enum.reduce(new_points, cloud, fn p, acc -> add_point(acc, p) end)
+  def add_points(%__MODULE__{points: points, bounds: bounds} = cloud, []) do
+    %{cloud | points: points, bounds: bounds}
+  end
+
+  def add_points(%__MODULE__{points: points, bounds: bounds} = cloud, new_points)
+      when is_list(new_points) do
+    new_bounds =
+      case bounds do
+        nil ->
+          Bounds.from_points(new_points)
+
+        %Bounds{} = b ->
+          Enum.reduce(new_points, b, fn %Point{} = point, acc ->
+            {x, y, z} = Point.coords(point)
+
+            %Bounds{
+              min_x: min(acc.min_x, x),
+              min_y: min(acc.min_y, y),
+              min_z: min(acc.min_z, z),
+              max_x: max(acc.max_x, x),
+              max_y: max(acc.max_y, y),
+              max_z: max(acc.max_z, z)
+            }
+          end)
+      end
+
+    %{cloud | points: points ++ new_points, bounds: new_bounds}
   end
 end

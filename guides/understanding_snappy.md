@@ -36,41 +36,36 @@ Snappy makes specific design choices that sacrifice ratio for speed:
 
 ## Snappy Format
 
-The Snappy compressed format consists of a header and chunks of data.
+ExCodecs uses the **raw Snappy block** format (not the separate Snappy framing format). A block is an uncompressed-length prefix followed by tagged elements.
 
-### Stream Header
+### Uncompressed Length Prefix
 
 ```
 +-------------------+
-| Length (varint)   |  -- Decompressed length in bytes
+| Length (varint)   |  -- Uncompressed length in bytes
 +-------------------+
 ```
 
-The decompressed size is encoded as a variable-length integer at the start of the compressed output. This allows the decompressor to pre-allocate the exact output buffer size.
+The uncompressed size is encoded as a variable-length integer at the start of the compressed block so the decompressor can size the output buffer.
 
-### Chunks
+### Elements
 
-Each chunk is one of three types:
+Each element starts with a tag byte. The lower two bits select the element type:
 
-1. **Literal (tag byte: 0x00)**: Raw bytes that could not be compressed.
-2. **Copy with 1-byte offset (tag byte: 0x01)**: Short copy, offset 0-63, length 4-7.
-3. **Copy with 2-byte offset (tag byte: 0x02)**: Longer copy, offset 0-65535, length 4-1027.
-
-Each chunk is prefixed by a tag byte that encodes the chunk type and inline data:
+| Tag (bits 1-0) | Type |
+|----------------|------|
+| `00` | Literal (raw bytes) |
+| `01` | Copy with 1-byte offset (length 4-11, offset 0-2047) |
+| `10` | Copy with 2-byte offset (length 1-64, offset 0-65535) |
+| `11` | Copy with 4-byte offset (legacy; length 1-64) |
 
 ```
 Tag byte:
   bits 7-2: length or offset info (depends on type)
-  bits 1-0: chunk type
+  bits 1-0: element type
 ```
 
-For literals, the length is encoded in the tag byte (up to 60 bytes inline, with extended length for larger literals).
-
-For copies:
-- The offset is stored as a 1-byte or 2-byte little-endian value.
-- The length minus the minimum match length (4) is stored inline in the tag byte or as an extra byte.
-
-The maximum offset is 64 KB. The maximum match length is 64 bytes for 1-byte offset copies and 64 KB for 2-byte offset copies.
+For literals, short lengths fit in the tag; longer literals use a 1-4 byte length field. Copies encode offset and length as described in Google's Snappy format description. Typical compressor windows are up to 64 KB.
 
 ### Format Properties
 
@@ -80,9 +75,13 @@ The maximum offset is 64 KB. The maximum match length is 64 bytes for 1-byte off
 
 ## Performance Characteristics
 
+Speeds and ratios below are illustrative order-of-magnitude figures from
+typical upstream C Snappy discussions; ExCodecs uses the pure-Rust `snap`
+crate. Benchmark your own data.
+
 ### Compression Speed
 
-Snappy compresses at approximately 500 MB/s on modern hardware. Key factors:
+Snappy is designed for very high compression throughput. Key factors:
 
 - The hash table is small and fits in L1/L2 cache.
 - No expensive operations (no sorting, no entropy coding, no optimal parsing).
@@ -90,17 +89,15 @@ Snappy compresses at approximately 500 MB/s on modern hardware. Key factors:
 
 ### Decompression Speed
 
-Snappy decompresses at approximately 1.5 GB/s. The decompressor:
+Decompression is similarly speed-oriented. The decompressor:
 
-- Reads the tag byte to determine the chunk type.
+- Reads the tag byte to determine the element type.
 - For literals: copies bytes verbatim (essentially a memcpy).
 - For copies: reads the offset and length, then copies from the already-decompressed output.
 
-This is nearly as fast as a memcpy of the compressed data, and the compressed data is smaller, so total time is often less than copying the uncompressed data.
-
 ### Compression Ratio
 
-Snappy's ratio is lower than LZ4, Zstd, and Bzip2. Typical ratios:
+Snappy's ratio is lower than LZ4, Zstd, and Bzip2. Illustrative ratios:
 
 | Data Type    | Snappy Ratio | LZ4 Ratio | Zstd Level 3 Ratio |
 |-------------|--------------|-----------|---------------------|
@@ -113,7 +110,7 @@ Snappy's lower ratio is the expected tradeoff for its speed advantage.
 
 ## Using Snappy in ExCodecs
 
-Snappy accepts no configuration options:
+Snappy has no encode-time configuration knobs (`configurable?: false`):
 
 ```elixir
 # Compress
@@ -123,14 +120,13 @@ Snappy accepts no configuration options:
 {:ok, original} = ExCodecs.decode(:snappy, compressed)
 ```
 
-The `opts` parameter is accepted but ignored:
+Encode ignores option keywords. Decode accepts `:max_output_size` (same
+decompression-bomb guard as other codecs):
 
 ```elixir
-# Options are ignored
-{:ok, compressed} = ExCodecs.encode(:snappy, data, [])
+{:ok, compressed} = ExCodecs.encode(:snappy, data)
+{:ok, original} = ExCodecs.decode(:snappy, compressed, max_output_size: 1_048_576)
 ```
-
-Snappy's codec metadata reflects this:
 
 ```elixir
 {:ok, info} = ExCodecs.codec_info(:snappy)
@@ -167,10 +163,10 @@ Snappy and LZ4 serve a similar niche. The main differences:
 
 | Property           | Snappy              | LZ4                         |
 |--------------------|---------------------|-----------------------------|
-| Compression Speed  | ~500 MB/s           | ~500 MB/s (level 1)         |
-| Decompression Speed| ~1.5 GB/s           | ~2 GB/s                     |
+| Compression Speed  | Fast                | Fast (fixed fast profile)   |
+| Decompression Speed| Fast                | Very fast                   |
 | Ratio              | Slightly lower      | Slightly higher             |
-| Configuration      | None                | 16 levels                   |
+| Configuration      | None                | None (no levels in ExCodecs) |
 | Format complexity  | Simple              | Slightly more complex       |
 | Deterministic      | Yes                 | Yes                         |
 | Max offset         | 64 KB               | 64 KB                       |

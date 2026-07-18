@@ -110,8 +110,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Notes
 
-- Precompiled NIF checksums must be regenerated when publishing GitHub release
-  artifacts for `0.2.0`; until then local builds use `force_build` / source compile.
 - `native/ex_codecs_native/Cargo.lock` is committed for reproducible NIF builds.
 
 ## [0.1.1] - 2026-06-15
@@ -157,11 +155,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Precompiled binaries for macOS (ARM64, x86_64), Linux (glibc, musl, ARM64), Windows (x86_64).
 - `ExCodecs.Compression` convenience module (`compress/3`, `decompress/3`).
 - Structured error handling with `%ExCodecs.Error{}`.
-- 154 tests (unit + property-based with StreamData).
-- 90%+ test coverage.
 - CI pipeline (test matrix, lint, coverage, docs).
 - Release workflow for Hex.pm publishing with precompiled NIFs.
 - Five livebooks: introduction, fundamentals, comparison, storage systems, Zarr workloads.
 - Eleven guides covering all public modules and API details.
 - Benchmarks via benchee.
 - Credo and Dialyzer integration.
+
+[Unreleased]: https://github.com/thanos/codecs/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/thanos/codecs/releases/tag/v0.2.3
+[0.2.2]: https://github.com/thanos/codecs/releases/tag/v0.2.2
+[0.2.1]: https://github.com/thanos/codecs/releases/tag/v0.2.1
+[0.2.0]: https://github.com/thanos/codecs/releases/tag/v0.2.0
+[0.1.1]: https://github.com/thanos/codecs/releases/tag/v0.1.1
+[0.1.0]: https://github.com/thanos/codecs/releases/tag/v0.1.0

@@ -22,6 +22,9 @@ defmodule ExCodecs.Native do
     otp_app: :ex_codecs,
     crate: :ex_codecs_native,
     version: version,
+    # This URL must match the GitHub repo that hosts release artifacts.
+    # If the repo is renamed, published checksums become invalid until
+    # a new release is cut. Keep in sync with @source_url in mix.exs.
     base_url: "https://github.com/thanos/codecs/releases/download/v#{version}",
     mode: :release,
     nif_versions: ["2.17"],
@@ -136,6 +139,8 @@ defmodule ExCodecs.Native do
   def nif_loaded? do
     is_map(codec_versions())
   rescue
+    # ErlangError: NIF not loaded (stub raises nif_error).
+    # ArgumentError: rare Rustler resource-arity mismatch on some OTPs.
     ErlangError -> false
     ArgumentError -> false
   end

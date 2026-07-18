@@ -1,13 +1,17 @@
 defmodule ExCodecs.Compression.SnappyTest do
   use ExUnit.Case, async: true
 
+  @moduletag :doctest
+  doctest ExCodecs.Compression.Snappy
+
   alias ExCodecs.Compression.Snappy
 
   describe "encode/2" do
-    test "compresses data" do
-      data = :crypto.strong_rand_bytes(1024)
+    test "round-trips compressible data" do
+      data = String.duplicate("hello world ", 1000)
       assert {:ok, compressed} = Snappy.encode(data, [])
-      assert is_binary(compressed)
+      assert {:ok, ^data} = Snappy.decode(compressed, [])
+      assert byte_size(compressed) < byte_size(data)
     end
 
     test "handles empty data" do
