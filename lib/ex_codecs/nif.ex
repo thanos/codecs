@@ -71,16 +71,18 @@ defmodule ExCodecs.NIF do
   def wrap(codec, {:error, :invalid_options}),
     do: {:error, ExCodecs.Error.new(:invalid_options, codec: codec)}
 
-  def wrap(codec, {:error, reason}) when is_atom(reason) and reason not in [
-        :compression_failed,
-        :decompression_failed,
-        :output_limit_exceeded,
-        :invalid_data,
-        :invalid_options,
-        :nif_not_loaded,
-        :io_error,
-        :truncated_input
-      ] do
+  def wrap(codec, {:error, reason})
+      when is_atom(reason) and
+             reason not in [
+               :compression_failed,
+               :decompression_failed,
+               :output_limit_exceeded,
+               :invalid_data,
+               :invalid_options,
+               :nif_not_loaded,
+               :io_error,
+               :truncated_input
+             ] do
     {:error,
      ExCodecs.Error.new(:invalid_data,
        codec: codec,

@@ -135,5 +135,4 @@ defmodule ExCodecs.Compression.ZstdTest do
       assert info.configurable? == true
     end
   end
-
 end

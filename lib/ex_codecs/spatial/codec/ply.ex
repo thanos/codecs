@@ -742,7 +742,8 @@ defmodule ExCodecs.Spatial.Codec.PLY do
     {:error,
      Error.new(:invalid_options,
        codec: :ply,
-       message: "Unsupported :as value: #{inspect(other)} (use :auto, :point_cloud, or :gaussian_cloud)"
+       message:
+         "Unsupported :as value: #{inspect(other)} (use :auto, :point_cloud, or :gaussian_cloud)"
      )}
   end
 
